@@ -126,8 +126,12 @@ exports.getAllSessions = async (req, res) => {
   try {
     const { Today, physioId, storedRole } = req.body;
 
-    const sessionCompletedId = new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0");
-    const sessionCancelledId = new mongoose.Types.ObjectId("692585f037162b40bd30a1ef");
+    const sessionCompletedId = new mongoose.Types.ObjectId(
+      "691ec69eae0e10763c8f21e0",
+    );
+    const sessionCancelledId = new mongoose.Types.ObjectId(
+      "692585f037162b40bd30a1ef",
+    );
 
     if (storedRole === "Physio" && physioId) {
       const today = new Date(Today);
@@ -144,7 +148,10 @@ exports.getAllSessions = async (req, res) => {
 
       const incompleteSessions = await Session.find({
         physioId: new mongoose.Types.ObjectId(physioId),
-        sessionDate: { $gte: new Date(startOfLastDay), $lte: new Date(endOfLastDay) },
+        sessionDate: {
+          $gte: new Date(startOfLastDay),
+          $lte: new Date(endOfLastDay),
+        },
         sessionStatusId: { $nin: [sessionCompletedId, sessionCancelledId] },
       })
         .populate("physioId", "physioName")
@@ -156,7 +163,8 @@ exports.getAllSessions = async (req, res) => {
 
       if (incompleteSessions.length > 0) {
         return res.status(200).json({
-          message: "Previous Incomplete sessions exists, Please complete them to start today's session",
+          message:
+            "Previous Incomplete sessions exists, Please complete them to start today's session",
           incompleteData: incompleteSessions,
           blockToday: true,
         });
@@ -167,7 +175,10 @@ exports.getAllSessions = async (req, res) => {
     const startOfRequestedDay = new Date(Today).setHours(0, 0, 0, 0);
     const endOfRequestedDay = new Date(Today).setHours(23, 59, 59, 999);
 
-    filter.sessionDate = { $gte: new Date(startOfRequestedDay), $lte: new Date(endOfRequestedDay) };
+    filter.sessionDate = {
+      $gte: new Date(startOfRequestedDay),
+      $lte: new Date(endOfRequestedDay),
+    };
 
     if (storedRole === "Physio" && physioId) {
       filter.physioId = new mongoose.Types.ObjectId(physioId);
@@ -203,6 +214,30 @@ exports.getAllSessions = async (req, res) => {
     return res.status(200).json(filteredSessions || []);
   } catch (error) {
     console.error("Get all sessions error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+exports.deleteDuplicateSession = async (req, res) => {
+  try {
+    const { patientId, physioId, sessionTime } = req.body;
+
+    if (
+      !mongoose.Types.ObjectId.isValid(patientId) ||
+      !mongoose.Types.ObjectId.isValid(physioId)
+    ) {
+      return res.status(400).json({ message: "Invalid ID" });
+    }
+
+    const result = await Session.deleteMany({
+      patientId: patientId,
+      physioId: physioId,
+      sessionTime: sessionTime,
+    });
+
+    res.status(200).json({
+      message: "sessions deleted successfully",
+    });
+  } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };

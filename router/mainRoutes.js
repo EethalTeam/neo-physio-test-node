@@ -73,7 +73,10 @@ router.post("/Session/getSingleSession", SessionControllers.getSingleSession);
 router.post("/Session/updateSession", SessionControllers.updateSession);
 router.post("/Session/deleteSession", SessionControllers.deleteSession);
 router.post("/Session/sessionStop", SessionControllers.sessionStop);
-
+router.post(
+  "/Session/deleteDuplicateSession",
+  SessionControllers.deleteDuplicateSession,
+);
 //Session Start and End
 
 router.post("/Session/SessionStart", SessionControllers.SessionStart);
