@@ -197,7 +197,7 @@ exports.getAllSessions = async (req, res) => {
         "sessionStatusName sessionStatusColor sessionStatusTextColor",
       )
       .populate("redFlags.redFlagId", "redflagName")
-      .sort({ sessionDateTime: 1 });
+      .sort({ sessionTime: 1 });
 
     const filteredSessions = sessions.filter((s) => {
       if (!s.patientId) return false;
