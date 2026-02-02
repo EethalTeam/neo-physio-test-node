@@ -85,7 +85,7 @@ exports.initSessionCron = (io) => {
 
 // --- 5 AM: DAILY SESSION GENERATION ---
 exports.initDailySessionGeneration = () => {
-    cron.schedule('25 10 * * 1-6', async () => {
+    cron.schedule('0 5 * * 1-6', async () => {
         try {
             console.log('🚀 Starting Daily Session Generation (5 AM IST)...');
             const { start, end } = getISTDateRange();
