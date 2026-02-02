@@ -175,10 +175,11 @@ exports.getAllPhysios = async (req, res) => {
     // const limit = parseInt(req.body.limit) || 10;
     // const skip = (page - 1) * limit;
     const { type } = req.body;
-    const filter = {};
+    const filter = {roleId: new mongoose.Types.ObjectId("6926ca2ccddb76460d277717")};
     if (type === undefined) {
       filter.isActive = true;
     }
+    console.log(filter,"filter")
     const physios = await Physio.find(filter)
       .populate("physioGenderId")
       .populate("roleId", "RoleName")
