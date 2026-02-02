@@ -607,72 +607,68 @@ exports.AssignPhysio = async (req, res) => {
         .json({ message: "AssignPhysio Cant able to update" });
     }
 
-    const counter = await Counter.findByIdAndUpdate(
-      { _id: "sessionCode" },
-      { $inc: { seq: totalSessionDays } },
-      { new: true, upsert: true },
-    );
+    // const counter = await Counter.findByIdAndUpdate(
+    //   { _id: "sessionCode" },
+    //   { $inc: { seq: totalSessionDays } },
+    //   { new: true, upsert: true },
+    // );
 
-    let nextSequenceNumber = counter.seq - totalSessionDays + 1;
+    // let nextSequenceNumber = counter.seq - totalSessionDays + 1;
 
-    let currentDate = new Date(sessionStartDate);
-    currentDate.setHours(12, 0, 0, 0);
+    // let currentDate = new Date(sessionStartDate);
+    // currentDate.setHours(12, 0, 0, 0);
 
-    const sessionsToCreate = [];
-    let sessionsGenerated = 0;
+    // const sessionsToCreate = [];
+    // let sessionsGenerated = 0;
 
-    const daysOfWeek = [
-      "Sunday",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-    ];
+    // const daysOfWeek = [
+    //   "Sunday",
+    //   "Monday",
+    //   "Tuesday",
+    //   "Wednesday",
+    //   "Thursday",
+    //   "Friday",
+    //   "Saturday",
+    // ];
 
-    while (sessionsGenerated < totalSessionDays) {
-      const currentDayIndex = currentDate.getDay();
+    // while (sessionsGenerated < totalSessionDays) {
+    //   const currentDayIndex = currentDate.getDay();
 
-      // Skip Sunday
-      if (currentDayIndex === 0) {
-        currentDate.setDate(currentDate.getDate() + 1);
-        continue;
-      }
-      const formattedCode = `SESS-${String(nextSequenceNumber).padStart(
-        6,
-        "0",
-      )}`;
+    //   // Skip Sunday
+    //   if (currentDayIndex === 0) {
+    //     currentDate.setDate(currentDate.getDate() + 1);
+    //     continue;
+    //   }
+    //   const formattedCode = `SESS-${String(nextSequenceNumber).padStart(
+    //     6,
+    //     "0",
+    //   )}`;
 
-      sessionsToCreate.push({
-        patientId: _id,
-        physioId: physioId,
-        sessionDate: new Date(currentDate),
-        sessionTime: sessionTime,
-        sessionStatusId: new mongoose.Types.ObjectId(
-          "691ecb36b87c5c57dead47a7",
-        ),
-        sessionDay: daysOfWeek[currentDayIndex],
-        sessionCode: formattedCode,
-      });
+    //   sessionsToCreate.push({
+    //     patientId: _id,
+    //     physioId: physioId,
+    //     sessionDate: new Date(currentDate),
+    //     sessionTime: sessionTime,
+    //     sessionStatusId: new mongoose.Types.ObjectId(
+    //       "691ecb36b87c5c57dead47a7",
+    //     ),
+    //     sessionDay: daysOfWeek[currentDayIndex],
+    //     sessionCode: formattedCode,
+    //   });
 
-      // Increment our local counters
-      sessionsGenerated++;
-      nextSequenceNumber++; // Move to the next number for the loop
+    //   // Increment our local counters
+    //   sessionsGenerated++;
+    //   nextSequenceNumber++; // Move to the next number for the loop
 
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
+    //   currentDate.setDate(currentDate.getDate() + 1);
+    // }
 
-    if (sessionsToCreate.length > 0) {
-      await Session.insertMany(sessionsToCreate);
-    }
+    // if (sessionsToCreate.length > 0) {
+    //   await Session.insertMany(sessionsToCreate);
+    // }
 
     res.status(200).json({
-      message: `Assigned and generated ${
-        sessionsToCreate.length
-      } sessions (Range: ${sessionsToCreate[0].sessionCode} to ${
-        sessionsToCreate[sessionsToCreate.length - 1].sessionCode
-      })`,
+      message:"Physio Assigned",
       AssignPhysio: AssignPhysio,
     });
   } catch (error) {
