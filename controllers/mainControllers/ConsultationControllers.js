@@ -564,102 +564,103 @@ exports.AssignPhysio = async (req, res) => {
     await newPatient.save();
     console.log(newPatient, "newPatient");
 
-    const counter = await Counter.findByIdAndUpdate(
-      { _id: "sessionCode" },
-      { $inc: { seq: totalSessionDays } },
-      { new: true, upsert: true },
-    );
+    // const counter = await Counter.findByIdAndUpdate(
+    //   { _id: "sessionCode" },
+    //   { $inc: { seq: totalSessionDays } },
+    //   { new: true, upsert: true },
+    // );
 
-    let nextSequenceNumber = counter.seq - totalSessionDays + 1;
-    let currentDate = new Date(sessionStartDate);
-    currentDate.setHours(12, 0, 0, 0);
+    // let nextSequenceNumber = counter.seq - totalSessionDays + 1;
+    // let currentDate = new Date(sessionStartDate);
+    // currentDate.setHours(12, 0, 0, 0);
 
-    const sessionsToCreate = [];
-    const reviewsToCreate = [];
-    const reviewTypeDefault = await ReviewType.findOne({
-      reviewTypeName: "General",
-    });
-    if (!reviewTypeDefault) {
-      return res.status(500).json({
-        message:
-          'Default ReviewType not found. Please create one named "Standard".',
-      });
-    }
+    // const sessionsToCreate = [];
+    // const reviewsToCreate = [];
+    // const reviewTypeDefault = await ReviewType.findOne({
+    //   reviewTypeName: "General",
+    // });
+    // if (!reviewTypeDefault) {
+    //   return res.status(500).json({
+    //     message:
+    //       'Default ReviewType not found. Please create one named "Standard".',
+    //   });
+    // }
 
-    const reviewStatusDefault = await ReviewStatus.findOne({
-      reviewStatusName: "Pending",
-    });
-    if (!reviewStatusDefault) {
-      return res.status(500).json({
-        message:
-          'Default Reviewstatus not found. Please create one named "Standard".',
-      });
-    }
-    let sessionsGenerated = 0;
-    const daysOfWeek = [
-      "Sunday",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-    ];
+    // const reviewStatusDefault = await ReviewStatus.findOne({
+    //   reviewStatusName: "Pending",
+    // });
+    // if (!reviewStatusDefault) {
+    //   return res.status(500).json({
+    //     message:
+    //       'Default Reviewstatus not found. Please create one named "Standard".',
+    //   });
+    // }
+    // let sessionsGenerated = 0;
+    // const daysOfWeek = [
+    //   "Sunday",
+    //   "Monday",
+    //   "Tuesday",
+    //   "Wednesday",
+    //   "Thursday",
+    //   "Friday",
+    //   "Saturday",
+    // ];
 
-    while (sessionsGenerated < totalSessionDays) {
-      const currentDayIndex = currentDate.getDay();
+    // while (sessionsGenerated < totalSessionDays) {
+    //   const currentDayIndex = currentDate.getDay();
 
-      if (currentDayIndex === 0) {
-        currentDate.setDate(currentDate.getDate() + 1);
-        continue;
-      }
+    //   if (currentDayIndex === 0) {
+    //     currentDate.setDate(currentDate.getDate() + 1);
+    //     continue;
+    //   }
 
-      const formattedCode = `SESS-${String(nextSequenceNumber).padStart(6, "0")}`;
-      const currentSessionDate = new Date(currentDate);
+    //   const formattedCode = `SESS-${String(nextSequenceNumber).padStart(6, "0")}`;
+    //   const currentSessionDate = new Date(currentDate);
 
-      sessionsToCreate.push({
-        patientId: newPatient._id,
-        physioId: physioId,
-        sessionDate: currentSessionDate,
-        sessionTime: sessionTime,
-        sessionStatusId: new mongoose.Types.ObjectId(
-          "691ecb36b87c5c57dead47a7",
-        ),
-        sessionDay: daysOfWeek[currentDayIndex],
-        sessionCode: formattedCode,
-      });
+    //   sessionsToCreate.push({
+    //     patientId: newPatient._id,
+    //     physioId: physioId,
+    //     sessionDate: currentSessionDate,
+    //     sessionTime: sessionTime,
+    //     sessionStatusId: new mongoose.Types.ObjectId(
+    //       "691ecb36b87c5c57dead47a7",
+    //     ),
+    //     sessionDay: daysOfWeek[currentDayIndex],
+    //     sessionCode: formattedCode,
+    //   });
 
-      sessionsGenerated++;
-      nextSequenceNumber++;
+    //   sessionsGenerated++;
+    //   nextSequenceNumber++;
 
-      if (reviewFrequency > 0 && sessionsGenerated % reviewFrequency === 0) {
-        reviewsToCreate.push({
-          patientId: newPatient._id,
-          physioId: physioId,
-          reviewStatusId: new mongoose.Types.ObjectId(reviewStatusDefault._id),
-          reviewDate: currentSessionDate,
-          reviewTypeId: new mongoose.Types.ObjectId(reviewTypeDefault._id),
-        });
-      }
+    //   if (reviewFrequency > 0 && sessionsGenerated % reviewFrequency === 0) {
+    //     reviewsToCreate.push({
+    //       patientId: newPatient._id,
+    //       physioId: physioId,
+    //       reviewStatusId: new mongoose.Types.ObjectId(reviewStatusDefault._id),
+    //       reviewDate: currentSessionDate,
+    //       reviewTypeId: new mongoose.Types.ObjectId(reviewTypeDefault._id),
+    //     });
+    //   }
 
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
+    //   currentDate.setDate(currentDate.getDate() + 1);
+    // }
 
-    if (sessionsToCreate.length > 0) {
-      await Session.insertMany(sessionsToCreate);
-    }
+    // if (sessionsToCreate.length > 0) {
+    //   await Session.insertMany(sessionsToCreate);
+    // }
 
-    if (reviewsToCreate.length > 0) {
-      await Review.insertMany(reviewsToCreate);
-    }
+    // if (reviewsToCreate.length > 0) {
+    //   await Review.insertMany(reviewsToCreate);
+    // }
 
     res.status(200).json({
       success: true,
-      message: `Successfully generated ${sessionsToCreate.length} sessions and ${reviewsToCreate.length} reviews.`,
+      // message: `Successfully generated ${sessionsToCreate.length} sessions and ${reviewsToCreate.length} reviews.`,
+      message: "Physio Assigned successfully",
       data: {
         patient: newPatient,
-        sessionsCount: sessionsToCreate.length,
-        reviewsCount: reviewsToCreate.length,
+        // sessionsCount: sessionsToCreate.length,
+        // reviewsCount: reviewsToCreate.length,
       },
     });
   } catch (error) {

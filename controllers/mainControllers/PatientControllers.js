@@ -228,7 +228,7 @@ exports.getAllPatients = async (req, res) => {
     const conPatients = await Patient.find({
       patientCode: { $regex: /^CON/ },
     }).sort({ createdAt: 1 });
-    
+
     if (conPatients.length > 0) {
       let counter = 1;
       for (const patient of conPatients) {
@@ -244,17 +244,19 @@ exports.getAllPatients = async (req, res) => {
     if (targetDate) {
       const startOfDay = new Date(targetDate);
       startOfDay.setHours(0, 0, 0, 0);
-      
+
       const endOfDay = new Date(targetDate);
       endOfDay.setHours(23, 59, 59, 999);
 
       // Find all sessions for that day
       const sessions = await Session.find({
-        sessionDate: { $gte: startOfDay, $lte: endOfDay }
+        sessionDate: { $gte: startOfDay, $lte: endOfDay },
       }).select("patientId");
 
       // Extract unique Patient IDs from those sessions
-      const patientIds = [...new Set(sessions.map(s => s.patientId.toString()))];
+      const patientIds = [
+        ...new Set(sessions.map((s) => s.patientId.toString())),
+      ];
 
       // Update filter to only find these patients
       patientFilter._id = { $in: patientIds };
@@ -277,7 +279,6 @@ exports.getAllPatients = async (req, res) => {
     }));
 
     res.status(200).json(response);
-    
   } catch (error) {
     console.error("Error in getAllPatients:", error);
     res.status(500).json({ message: error.message });
@@ -733,7 +734,7 @@ exports.AssignPhysio = async (req, res) => {
     // }
 
     res.status(200).json({
-      message:"Physio Assigned",
+      message: "Physio Assigned",
       AssignPhysio: AssignPhysio,
     });
   } catch (error) {
@@ -748,25 +749,25 @@ exports.getPhysioPatientCounts = async (req, res) => {
       {
         $match: {
           isRecovered: false,
-          physioId: { $ne: null } 
-        }
+          physioId: { $ne: null },
+        },
       },
       {
         $group: {
           _id: "$physioId",
-          activePatientCount: { $sum: 1 }
-        }
+          activePatientCount: { $sum: 1 },
+        },
       },
       {
         $lookup: {
-          from: "physios", 
+          from: "physios",
           localField: "_id",
           foreignField: "_id",
-          as: "physioDetails"
-        }
+          as: "physioDetails",
+        },
       },
       {
-        $unwind: "$physioDetails"
+        $unwind: "$physioDetails",
       },
       {
         $project: {
@@ -774,24 +775,23 @@ exports.getPhysioPatientCounts = async (req, res) => {
           physioId: "$_id",
           physioName: "$physioDetails.physioName",
           physioCode: "$physioDetails.physioCode",
-          activePatientCount: 1
-        }
+          activePatientCount: 1,
+        },
       },
       {
-        $sort: { activePatientCount: -1 }
-      }
+        $sort: { activePatientCount: -1 },
+      },
     ]);
 
     return res.status(200).json({
       success: true,
-      data: physioStats
+      data: physioStats,
     });
-
   } catch (error) {
     console.error("Error fetching physio patient counts:", error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
