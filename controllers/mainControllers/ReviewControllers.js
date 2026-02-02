@@ -116,21 +116,59 @@ exports.createRedflag = async (req, res) => {
 };
 
 // Get all Review
+// exports.getAllReview = async (req, res) => {
+//   try {
+//     const reviews = await Review.find()
+//       .populate("patientId", "patientName shortTermGoals longTermGoals")
+//       .populate("physioId", "physioName")
+//       .populate("reviewTypeId", "reviewTypeName")
+//       .populate("redFlags.redFlagId")
+//       .populate("reviewStatusId", "reviewStatusName")
+//       .populate("Satisfaction");
+
+//     res.status(200).json(reviews);
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+
 exports.getAllReview = async (req, res) => {
   try {
-    const reviews = await Review.find()
+    // 1. Calculate India Timezone (IST) boundaries
+    const now = new Date();
+    // Manual offset for IST (UTC +5:30)
+    const offset = 5.5 * 60 * 60 * 1000;
+    const istNow = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + offset);
+
+    // Today's Start (00:00:00 IST)
+    const startOfToday = new Date(istNow);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    // Tomorrow's End (23:59:59 IST)
+    const endOfTomorrow = new Date(istNow);
+    endOfTomorrow.setDate(istNow.getDate() + 1);
+    endOfTomorrow.setHours(23, 59, 59, 999);
+
+    // 2. Query with date filter
+    const reviews = await Review.find({
+      reviewDate: {
+        $gte: startOfToday,
+        $lte: endOfTomorrow
+      }
+    })
       .populate("patientId", "patientName shortTermGoals longTermGoals")
       .populate("physioId", "physioName")
       .populate("reviewTypeId", "reviewTypeName")
       .populate("redFlags.redFlagId")
       .populate("reviewStatusId", "reviewStatusName")
-      .populate("Satisfaction");
+      .sort({ reviewDate: 1 }); // Sorted by date for better visibility
 
     res.status(200).json(reviews);
   } catch (error) {
+    console.error("Error fetching reviews:", error);
     res.status(500).json({ message: error.message });
   }
-};
+}
 
 // Get Review by ID
 exports.getReviewById = async (req, res) => {

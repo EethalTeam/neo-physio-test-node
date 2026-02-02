@@ -54,6 +54,7 @@ router.post(
 );
 //Assign Physio
 router.post("/Patient/AssignPhysio", PatientControllers.AssignPhysio);
+router.post("/Patient/getPhysioPatientCounts", PatientControllers.getPhysioPatientCounts)
 
 //ExpenseControllers
 router.post("/Expense/createExpense", ExpenseControllers.createExpense);

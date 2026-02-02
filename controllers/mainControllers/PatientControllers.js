@@ -186,12 +186,49 @@ exports.createPatients = async (req, res) => {
   }
 };
 // Get all Patient
+// exports.getAllPatients = async (req, res) => {
+//   // Replace all old CON codes sequentially (one-time, in-place)
+//   try {
+//     const conPatients = await Patient.find({
+//       patientCode: { $regex: /^CON/ },
+//     }).sort({ createdAt: 1 });
+//     if (conPatients.length > 0) {
+//       let counter = 1;
+//       for (const patient of conPatients) {
+//         patient.patientCode = `HNP${String(counter).padStart(6, "0")}`;
+//         await patient.save();
+//         counter++;
+//       }
+//     }
+
+//     // try {
+//     const Patients = await Patient.find()
+//       .populate("FeesTypeId", "feesTypeName")
+//       .populate("patientGenderId", "genderName")
+//       .populate("MedicalHistoryAndRiskFactor.RiskFactorID", "RiskFactorName")
+//       .populate("physioId", "physioName");
+//     if (!Patients) {
+//       res.status(400).json({ message: "patients is not found" });
+//     }
+//     const response = Patients.map((p) => ({
+//       ...p._doc,
+//       FeesTypeName: p.FeesTypeId?.feesTypeName || "N/A", // add this field
+//     }));
+//     res.status(200).json(response);
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+
 exports.getAllPatients = async (req, res) => {
-  // Replace all old CON codes sequentially (one-time, in-place)
   try {
+    const { targetDate } = req.body; // Pass date like "2026-02-02"
+
+    // 1. One-time fix for Patient Codes (Existing logic)
     const conPatients = await Patient.find({
       patientCode: { $regex: /^CON/ },
     }).sort({ createdAt: 1 });
+    
     if (conPatients.length > 0) {
       let counter = 1;
       for (const patient of conPatients) {
@@ -201,24 +238,52 @@ exports.getAllPatients = async (req, res) => {
       }
     }
 
-    // try {
-    const Patients = await Patient.find()
+    let patientFilter = {};
+
+    // 2. NEW LOGIC: Filter by Session Date
+    if (targetDate) {
+      const startOfDay = new Date(targetDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      
+      const endOfDay = new Date(targetDate);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      // Find all sessions for that day
+      const sessions = await Session.find({
+        sessionDate: { $gte: startOfDay, $lte: endOfDay }
+      }).select("patientId");
+
+      // Extract unique Patient IDs from those sessions
+      const patientIds = [...new Set(sessions.map(s => s.patientId.toString()))];
+
+      // Update filter to only find these patients
+      patientFilter._id = { $in: patientIds };
+    }
+
+    // 3. Fetch Patients based on filter
+    const patients = await Patient.find(patientFilter)
       .populate("FeesTypeId", "feesTypeName")
       .populate("patientGenderId", "genderName")
       .populate("MedicalHistoryAndRiskFactor.RiskFactorID", "RiskFactorName")
       .populate("physioId", "physioName");
-    if (!Patients) {
-      res.status(400).json({ message: "patients is not found" });
+
+    if (!patients || patients.length === 0) {
+      return res.status(200).json([]); // Return empty array if no sessions on that date
     }
-    const response = Patients.map((p) => ({
+
+    const response = patients.map((p) => ({
       ...p._doc,
-      FeesTypeName: p.FeesTypeId?.feesTypeName || "N/A", // add this field
+      FeesTypeName: p.FeesTypeId?.feesTypeName || "N/A",
     }));
+
     res.status(200).json(response);
+    
   } catch (error) {
+    console.error("Error in getAllPatients:", error);
     res.status(500).json({ message: error.message });
   }
 };
+
 exports.getAllPatientsIncome = async (req, res) => {
   try {
     const { month, year } = req.body;
@@ -674,5 +739,59 @@ exports.AssignPhysio = async (req, res) => {
   } catch (error) {
     console.error("Error assigning physio:", error);
     res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getPhysioPatientCounts = async (req, res) => {
+  try {
+    const physioStats = await Patient.aggregate([
+      {
+        $match: {
+          isRecovered: false,
+          physioId: { $ne: null } 
+        }
+      },
+      {
+        $group: {
+          _id: "$physioId",
+          activePatientCount: { $sum: 1 }
+        }
+      },
+      {
+        $lookup: {
+          from: "physios", 
+          localField: "_id",
+          foreignField: "_id",
+          as: "physioDetails"
+        }
+      },
+      {
+        $unwind: "$physioDetails"
+      },
+      {
+        $project: {
+          _id: 0,
+          physioId: "$_id",
+          physioName: "$physioDetails.physioName",
+          physioCode: "$physioDetails.physioCode",
+          activePatientCount: 1
+        }
+      },
+      {
+        $sort: { activePatientCount: -1 }
+      }
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      data: physioStats
+    });
+
+  } catch (error) {
+    console.error("Error fetching physio patient counts:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
