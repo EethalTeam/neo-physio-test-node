@@ -1,91 +1,102 @@
 const Physio = require("../../model/masterModels/Physio");
 const mongoose = require("mongoose");
 const LeaveModel = require("../../model/masterModels/Leave");
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
 // --- MULTER CONFIGURATION ---
-const uploadDir = 'physioPic';
+const uploadDir = "physioPic";
 if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir);
+  fs.mkdirSync(uploadDir);
 }
 
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => {
-        cb(null, `physio-${Date.now()}${path.extname(file.originalname)}`);
-    }
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    cb(null, `physio-${Date.now()}${path.extname(file.originalname)}`);
+  },
 });
 
 const fileFilter = (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png/;
-    const ext = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mime = allowedTypes.test(file.mimetype);
-    if (ext && mime) return cb(null, true);
-    cb(new Error('Only .png, .jpg and .jpeg formats are allowed!'));
+  const allowedTypes = /jpeg|jpg|png/;
+  const ext = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mime = allowedTypes.test(file.mimetype);
+  if (ext && mime) return cb(null, true);
+  cb(new Error("Only .png, .jpg and .jpeg formats are allowed!"));
 };
 
-const upload = multer({ 
-    storage, 
-    fileFilter, 
-    limits: { fileSize: 5 * 1024 * 1024 } 
-}).single('physioPic');
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 },
+}).single("physioPic");
 
 // --- MIDDLEWARE WRAPPER ---
 exports.physioUploadMiddleware = (req, res, next) => {
-    upload(req, res, (err) => {
-        if (err instanceof multer.MulterError) {
-            return res.status(400).json({ message: err.code === 'LIMIT_FILE_SIZE' ? "File too large (Max 5MB)" : err.message });
-        } else if (err) {
-            return res.status(400).json({ message: err.message });
-        }
-        next();
-    });
+  upload(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({
+        message:
+          err.code === "LIMIT_FILE_SIZE"
+            ? "File too large (Max 5MB)"
+            : err.message,
+      });
+    } else if (err) {
+      return res.status(400).json({ message: err.message });
+    }
+    next();
+  });
 };
 
 // --- CREATE PHYSIO ---
 exports.createPhysio = async (req, res) => {
-    try {
-        const data = req.body;
-        const physioPic = req.file ? req.file.path : "";
+  try {
+    const data = req.body;
+    const physioPic = req.file ? req.file.path : "";
 
-        // Sequential Code Logic
-        const lastPhysio = await Physio.findOne({}, {}, { sort: { createdAt: -1 } });
-        let nextNum = 1;
-        if (lastPhysio?.physioCode) {
-            const lastNum = parseInt(lastPhysio.physioCode.replace("PHYSIO", ""));
-            nextNum = isNaN(lastNum) ? 1 : lastNum + 1;
-        }
-        const physioCode = `PHYSIO${String(nextNum).padStart(3, "0")}`;
-
-        const newPhysio = new Physio({ ...data, physioCode, physioPic });
-        await newPhysio.save();
-        res.status(201).json(newPhysio);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+    // Sequential Code Logic
+    const lastPhysio = await Physio.findOne(
+      {},
+      {},
+      { sort: { createdAt: -1 } },
+    );
+    let nextNum = 1;
+    if (lastPhysio?.physioCode) {
+      const lastNum = parseInt(lastPhysio.physioCode.replace("PHYSIO", ""));
+      nextNum = isNaN(lastNum) ? 1 : lastNum + 1;
     }
+    const physioCode = `PHYSIO${String(nextNum).padStart(3, "0")}`;
+
+    const newPhysio = new Physio({ ...data, physioCode, physioPic });
+    await newPhysio.save();
+    res.status(201).json(newPhysio);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 // --- UPDATE PHYSIO ---
 exports.updatePhysio = async (req, res) => {
-    try {
-        const { _id, ...updateData } = req.body;
-        
-        if (req.file) {
-            // Delete old file if exists
-            const oldRecord = await Physio.findById(_id);
-            if (oldRecord?.physioPic && fs.existsSync(oldRecord.physioPic)) {
-                fs.unlinkSync(oldRecord.physioPic);
-            }
-            updateData.physioPic = req.file.path;
-        }
+  try {
+    const { _id, ...updateData } = req.body;
 
-        const updated = await Physio.findByIdAndUpdate(_id, updateData, { new: true });
-        res.status(200).json(updated);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+    if (req.file) {
+      // Delete old file if exists
+      const oldRecord = await Physio.findById(_id);
+      if (oldRecord?.physioPic && fs.existsSync(oldRecord.physioPic)) {
+        fs.unlinkSync(oldRecord.physioPic);
+      }
+      updateData.physioPic = req.file.path;
     }
+
+    const updated = await Physio.findByIdAndUpdate(_id, updateData, {
+      new: true,
+    });
+    res.status(200).json(updated);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 exports.markLeave = async (req, res) => {
   try {
@@ -174,18 +185,29 @@ exports.getAllPhysios = async (req, res) => {
     // const limit = parseInt(req.body.limit) || 10;
     // const skip = (page - 1) * limit;
     const { type } = req.body;
-    const filter = {roleId: new mongoose.Types.ObjectId("6926ca2ccddb76460d277717")};
+    const filter = {
+      roleId: new mongoose.Types.ObjectId("6926ca2ccddb76460d277717"),
+    };
     if (type === undefined) {
       filter.isActive = true;
     }
-    console.log(filter,"filter")
-    const physios = await Physio.find(filter)
+    console.log(filter, "filter");
+    let physios = await Physio.find(filter)
       .populate("physioGenderId")
       .populate("roleId", "RoleName")
       // .skip(skip)
       // .limit(limit)
       .sort({ createdAt: -1 });
 
+    physios = physios.map((p) => {
+      if (p.physioPic) {
+        const filePath = path.join(__dirname, "../physioPic", p.physioPic);
+        if (!fs.existsSync(filePath)) {
+          p.physioPic = null;
+        }
+      }
+      return p;
+    });
     const totalPhysios = await Physio.countDocuments({ isActive: true });
 
     res.status(200).json({
