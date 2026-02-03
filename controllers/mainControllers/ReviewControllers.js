@@ -138,7 +138,9 @@ exports.getAllReview = async (req, res) => {
     const now = new Date();
     // Manual offset for IST (UTC +5:30)
     const offset = 5.5 * 60 * 60 * 1000;
-    const istNow = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + offset);
+    const istNow = new Date(
+      now.getTime() + now.getTimezoneOffset() * 60000 + offset,
+    );
 
     // Today's Start (00:00:00 IST)
     const startOfToday = new Date(istNow);
@@ -153,10 +155,13 @@ exports.getAllReview = async (req, res) => {
     const reviews = await Review.find({
       reviewDate: {
         $gte: startOfToday,
-        $lte: endOfTomorrow
-      }
+        $lte: endOfTomorrow,
+      },
     })
-      .populate("patientId", "patientName shortTermGoals longTermGoals")
+      .populate(
+        "patientId",
+        "patientName shortTermGoals longTermGoals isRecovered",
+      )
       .populate("physioId", "physioName")
       .populate("reviewTypeId", "reviewTypeName")
       .populate("redFlags.redFlagId")
@@ -168,7 +173,7 @@ exports.getAllReview = async (req, res) => {
     console.error("Error fetching reviews:", error);
     res.status(500).json({ message: error.message });
   }
-}
+};
 
 // Get Review by ID
 exports.getReviewById = async (req, res) => {

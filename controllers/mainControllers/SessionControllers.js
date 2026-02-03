@@ -371,7 +371,7 @@ exports.updateSession = async (req, res) => {
       sessionTime,
       sessionFromTime,
       sessionToTime,
-
+      sessionCount,
       sessionStatusId,
       sessionFeedbackPros,
       sessionFeedbackCons,
