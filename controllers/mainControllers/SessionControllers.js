@@ -355,6 +355,7 @@ exports.updateSession = async (req, res) => {
           sessionFeedbackCons,
           modeOfExercise,
           redFlags,
+          sessionCount,
           homeExerciseAssigned,
           modalitiesList,
           targetArea,
