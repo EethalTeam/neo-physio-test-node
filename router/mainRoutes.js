@@ -54,7 +54,10 @@ router.post(
 );
 //Assign Physio
 router.post("/Patient/AssignPhysio", PatientControllers.AssignPhysio);
-router.post("/Patient/getPhysioPatientCounts", PatientControllers.getPhysioPatientCounts)
+router.post(
+  "/Patient/getPhysioPatientCounts",
+  PatientControllers.getPhysioPatientCounts,
+);
 
 //ExpenseControllers
 router.post("/Expense/createExpense", ExpenseControllers.createExpense);
@@ -62,7 +65,7 @@ router.post("/Expense/getAllExpense", ExpenseControllers.getAllExpense);
 router.post("/Expense/getSingleExpense", ExpenseControllers.getSingleExpense);
 router.post("/Expense/updateExpense", ExpenseControllers.updateExpense);
 router.post("/Expense/deleteExpense", ExpenseControllers.deleteExpense);
-
+router.post("/Session/getMonthlySummary", SessionControllers.getMonthlySummary);
 //SessionControllers
 router.post("/Session/createSession", SessionControllers.createSession);
 router.post(

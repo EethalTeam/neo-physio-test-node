@@ -122,6 +122,44 @@ exports.createSession = async (req, res) => {
 //     res.status(500).json({ message: error.message });
 //   }
 // };
+
+exports.getMonthlySummary = async (req, res) => {
+  try {
+    const { physioId, month, year } = req.body;
+
+    if (!physioId || !month || !year) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 1);
+
+    const sessions = await Session.find({
+      physioId: new mongoose.Types.ObjectId(physioId),
+      sessionDate: { $gte: startDate, $lt: endDate },
+    }).populate("sessionStatusId", "sessionStatusName");
+
+    const summary = {
+      totalSessions: sessions.length,
+      completedSessions: sessions.filter(
+        (s) => s.sessionStatusId?.sessionStatusName === "Completed",
+      ).length,
+      cancelledSessions: sessions.filter(
+        (s) => s.sessionStatusId?.sessionStatusName === "Canceled",
+      ).length,
+      upcomingSessions: sessions.filter((s) =>
+        ["Scheduled", "Attended"].includes(
+          s.sessionStatusId?.sessionStatusName,
+        ),
+      ).length,
+    };
+
+    res.status(200).json(summary);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 exports.getAllSessions = async (req, res) => {
   try {
     const { Today, physioId, storedRole } = req.body;
@@ -133,55 +171,66 @@ exports.getAllSessions = async (req, res) => {
       "692585f037162b40bd30a1ef",
     );
 
-    if (storedRole === "Physio" && physioId) {
+    let filter = {};
+
+    /* ---------------- PHYSIO BLOCK CHECK ---------------- */
+    if (storedRole === "Physio" && physioId && Today) {
       const today = new Date(Today);
-      let lastWorkingDay = new Date(today);
+      if (!isNaN(today)) {
+        let lastWorkingDay = new Date(today);
 
-      if (today.getDay() === 1) {
-        lastWorkingDay.setDate(today.getDate() - 2);
-      } else {
-        lastWorkingDay.setDate(today.getDate() - 1);
-      }
+        if (today.getDay() === 1) {
+          lastWorkingDay.setDate(today.getDate() - 2);
+        } else {
+          lastWorkingDay.setDate(today.getDate() - 1);
+        }
 
-      const startOfLastDay = new Date(lastWorkingDay).setHours(0, 0, 0, 0);
-      const endOfLastDay = new Date(lastWorkingDay).setHours(23, 59, 59, 999);
+        const startOfLastDay = new Date(lastWorkingDay);
+        startOfLastDay.setHours(0, 0, 0, 0);
 
-      const incompleteSessions = await Session.find({
-        physioId: new mongoose.Types.ObjectId(physioId),
-        sessionDate: {
-          $gte: new Date(startOfLastDay),
-          $lte: new Date(endOfLastDay),
-        },
-        sessionStatusId: { $nin: [sessionCompletedId, sessionCancelledId] },
-      })
-        .populate("physioId", "physioName")
-        .populate({
-          path: "patientId",
-          populate: { path: "patientGenderId", select: "genderName" },
+        const endOfLastDay = new Date(lastWorkingDay);
+        endOfLastDay.setHours(23, 59, 59, 999);
+
+        const incompleteSessions = await Session.find({
+          physioId,
+          sessionDate: { $gte: startOfLastDay, $lte: endOfLastDay },
+          sessionStatusId: { $nin: [sessionCompletedId, sessionCancelledId] },
         })
-        .populate("sessionStatusId", "sessionStatusName sessionStatusColor");
+          .populate("physioId", "physioName")
+          .populate({
+            path: "patientId",
+            populate: { path: "patientGenderId", select: "genderName" },
+          })
+          .populate("sessionStatusId", "sessionStatusName sessionStatusColor");
 
-      if (incompleteSessions.length > 0) {
-        return res.status(200).json({
-          message:
-            "Previous Incomplete sessions exists, Please complete them to start today's session",
-          incompleteData: incompleteSessions,
-          blockToday: true,
-        });
+        if (incompleteSessions.length > 0) {
+          return res.status(200).json({
+            message:
+              "Previous Incomplete sessions exists, Please complete them to start today's session",
+            incompleteData: incompleteSessions,
+            blockToday: true,
+          });
+        }
       }
     }
 
-    let filter = {};
-    const startOfRequestedDay = new Date(Today).setHours(0, 0, 0, 0);
-    const endOfRequestedDay = new Date(Today).setHours(23, 59, 59, 999);
+    /* ---------------- DATE FILTER (SAFE) ---------------- */
+    if (Today) {
+      const date = new Date(Today);
+      if (!isNaN(date)) {
+        const startDay = new Date(date);
+        startDay.setHours(0, 0, 0, 0);
 
-    filter.sessionDate = {
-      $gte: new Date(startOfRequestedDay),
-      $lte: new Date(endOfRequestedDay),
-    };
+        const endDay = new Date(date);
+        endDay.setHours(23, 59, 59, 999);
 
+        filter.sessionDate = { $gte: startDay, $lte: endDay };
+      }
+    }
+
+    /* ---------------- PHYSIO FILTER ---------------- */
     if (storedRole === "Physio" && physioId) {
-      filter.physioId = new mongoose.Types.ObjectId(physioId);
+      filter.physioId = physioId;
     }
 
     const sessions = await Session.find(filter)
@@ -201,22 +250,26 @@ exports.getAllSessions = async (req, res) => {
 
     const filteredSessions = sessions.filter((s) => {
       if (!s.patientId) return false;
+
       const sDate = new Date(s.sessionDate);
       sDate.setHours(0, 0, 0, 0);
+
       const now = new Date();
       now.setHours(0, 0, 0, 0);
+
       if (s.patientId.isRecovered === true && sDate > now) {
         return false;
       }
       return true;
     });
 
-    return res.status(200).json(filteredSessions || []);
+    res.status(200).json(filteredSessions);
   } catch (error) {
     console.error("Get all sessions error:", error);
     res.status(500).json({ message: error.message });
   }
 };
+
 exports.deleteDuplicateSession = async (req, res) => {
   try {
     const { patientId, physioId, sessionTime } = req.body;

@@ -6,7 +6,7 @@ const Session = require("../../model/masterModels/Session");
 const Consultation = require("../../model/masterModels/Consultation");
 const Review = require("../../model/masterModels/Review");
 const PatientModel = require("../../model/masterModels/Patient");
-
+const SessionStatus = require("../../model/masterModels/SessionStatus");
 exports.getAllDashBoard = async (req, res) => {
   try {
     let lead = await Leads.find();
@@ -27,6 +27,15 @@ exports.getAllDashBoard = async (req, res) => {
             r.reviewStatusId?.reviewStatusName?.toLowerCase() === "completed",
         ),
       );
+    const completedStatus = await SessionStatus.findOne({
+      sessionStatusName: "Completed",
+    });
+
+    // Get the total number of completed sessions
+    const completedSessionsCount = await Session.find({
+      sessionStatusId: completedStatus._id,
+    });
+
     let year = new Date().getFullYear();
     let month = new Date().getMonth();
     let startDate = new Date(year, month, 1);
@@ -35,7 +44,10 @@ exports.getAllDashBoard = async (req, res) => {
     let patientRecover = await PatientModel.find({
       recoveredType: "Patient Recovered",
     });
-    let physio = await Physio.find({ isActive: true });
+    let physio = await Physio.find({
+      roleId: new mongoose.Types.ObjectId("6926ca2ccddb76460d277717"),
+      isActive: true,
+    });
 
     let monthlySessions = await Session.find({
       sessionDate: { $gte: startDate, $lt: endDate },
@@ -43,21 +55,31 @@ exports.getAllDashBoard = async (req, res) => {
 
     console.log("Monthly sessions:", monthlySessions.length);
 
-    let sessionCompleted = await Session.find({
-      sessionToTime: { $ne: null },
+    // let sessionCompleted = await Session.find({
+    //   sessionToTime: { $ne: null },
+    // });
+
+    const sessionCompleted = await Session.countDocuments({
+      sessionToTime: { $exists: true, $ne: null },
     });
+
     const start = performance.now();
     let today = new Date();
-    let startDay = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate(),
-    );
-    let endDay = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate() + 1,
-    );
+    // let startDay = new Date(
+    //   today.getFullYear(),
+    //   today.getMonth(),
+    //   today.getDate(),
+    // );
+    // let endDay = new Date(
+    //   today.getFullYear(),
+    //   today.getMonth(),
+    //   today.getDate() + 1,
+    // );
+    const startDay = new Date();
+    startDay.setHours(0, 0, 0, 0);
+
+    const endDay = new Date();
+    endDay.setHours(23, 59, 59, 999);
 
     let todaysession = await Session.find({
       sessionDate: { $gte: startDay, $lt: endDay },
@@ -73,6 +95,7 @@ exports.getAllDashBoard = async (req, res) => {
       completedReview: completedReview.length,
       patientRecover: patientRecover.length,
       sessionCompleted: sessionCompleted.length,
+      sessionCompleted: completedSessionsCount.length,
       todaysession: todaysession.length,
     };
 
