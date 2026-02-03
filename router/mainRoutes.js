@@ -21,10 +21,10 @@ router.post("/Lead/deleteLead", LeadControllers.deleteLead);
 router.post("/Lead/QualifyLead", LeadControllers.QualifyLead);
 
 //Physio
-router.post("/Physio/createPhysio", physioControllers.createPhysio);
+router.post("/Physio/createPhysio",physioControllers.physioUploadMiddleware, physioControllers.createPhysio);
 router.post("/Physio/getAllPhysio", physioControllers.getAllPhysios);
 router.post("/Physio/getSinglePhysio", physioControllers.getPhysioById);
-router.post("/Physio/updatePhysio", physioControllers.updatePhysio);
+router.post("/Physio/updatePhysio",physioControllers.physioUploadMiddleware, physioControllers.updatePhysio);
 router.post("/Physio/deletePhysio", physioControllers.deletePhysio);
 //physio login
 

@@ -6,6 +6,11 @@ const physioSChema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    physioPic: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     EmpCode: {
       type: String,
       trim: true,

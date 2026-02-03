@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const express = require("express");
 const cors = require("cors");
+const path = require('path');
 const bodyParser = require("body-parser");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -27,8 +28,9 @@ app.use(
     verify: (req, res, buf) => {
       req.rawBody = buf; // Save the raw buffer to the request object
     },
-  }),
+  },{ limit: '10mb' }),
 );
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(
   cors({
     origin: "*",
@@ -49,7 +51,7 @@ app.get("/privacy", (req, res) => {
     <p>If you wish to opt-out or request data deletion, please contact eethalnaditsolutions@gmail.com.</p>
   `);
 });
-
+app.use('/physioPic', express.static(path.join(__dirname, 'physioPic')));
 app.use("/api", masterRoutes);
 app.use("/api", mainRoutes);
 
