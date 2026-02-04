@@ -12,9 +12,9 @@ exports.createReview = async (req, res) => {
     const {
       patientId,
       physioId,
-      sessionId,
+      // sessionId,
       reviewDate,
-      reviewTime,
+      // reviewTime,
       reviewTypeId,
       redflagId,
       feedback,
@@ -27,7 +27,7 @@ exports.createReview = async (req, res) => {
     if (
       !patientId ||
       !physioId ||
-      !sessionId ||
+      // !sessionId ||
       !reviewTypeId ||
       !reviewStatusId ||
       !Satisfaction

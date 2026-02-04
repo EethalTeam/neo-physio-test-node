@@ -28,7 +28,7 @@ const ReviewSchema = new mongoose.Schema(
     reviewTypeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "ReviewType",
-      required: true,
+      // required: true,
     },
     redFlags: [
       {

@@ -32,6 +32,7 @@ exports.getAllDashBoard = async (req, res) => {
             r.reviewStatusId?.reviewStatusName?.toLowerCase() === "pending",
         ),
       );
+    console.log(pendingreviews, "pendingreviews");
     let completedReview = await Review.find()
       .populate("reviewStatusId") // populates the status object
       .then((reviews) =>
@@ -47,7 +48,14 @@ exports.getAllDashBoard = async (req, res) => {
     // Get the total number of completed sessions
     let completedSessionsCount = await Session.find({
       sessionStatusId: completedStatus._id,
+      ...(fromDate && {
+        sessionDate: {
+          $gte: new Date(fromDate + "T00:00:00.000Z"),
+          $lte: new Date((toDate || fromDate) + "T23:59:59.999Z"),
+        },
+      }),
     });
+
     let startDate;
     let endDate;
 
@@ -120,8 +128,8 @@ exports.getAllDashBoard = async (req, res) => {
       pendingreviews: pendingreviews.length,
       completedReview: completedReview.length,
       patientRecover: patientRecover.length,
-      sessionCompleted: sessionCompleted.length,
-      // sessionCompleted: completedSessionsCount.length,
+      // sessionCompleted: sessionCompleted.length,
+      sessionCompleted: completedSessionsCount.length,
       todaysession: todaysession.length,
     };
 
