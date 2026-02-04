@@ -500,6 +500,34 @@ exports.sessionStop = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+exports.sessionCancelRevert = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+
+    const scheduledStatus = await SessionStatus.findOne({
+      sessionStatusName: "Scheduled",
+    });
+
+    if (!scheduledStatus) {
+      return res.status(400).json({ error: "Scheduled status not found" });
+    }
+
+    await Session.findByIdAndUpdate(sessionId, {
+      sessionStatusId: scheduledStatus._id,
+      cancelledReason: "",
+      sessionFeedbackCons: "",
+      cancelledKms: 0,
+    });
+
+    res.json({
+      success: true,
+      message: "Session reverted successfully",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Revert failed" });
+  }
+};
 
 exports.SessionCancel = async (req, res) => {
   try {
@@ -524,54 +552,6 @@ exports.SessionCancel = async (req, res) => {
     console.log(cancelledSession, "cancelledSession");
     if (!cancelledSession) {
       return res.status(400).json({ message: "Session not found" });
-    }
-
-    // --- RESCHEDULING LOGIC (AS PREVIOUSLY IMPLEMENTED) ---
-    const lastSession = await Session.findOne({
-      patientId: cancelledSession.patientId,
-    }).sort({ sessionDate: -1 });
-
-    if (lastSession) {
-      let nextDate = new Date(lastSession.sessionDate);
-      let foundNextDate = false;
-      while (!foundNextDate) {
-        nextDate.setDate(nextDate.getDate() + 1);
-        if (nextDate.getDay() !== 0) foundNextDate = true;
-      }
-
-      const counter = await Counter.findByIdAndUpdate(
-        { _id: "sessionCode" },
-        { $inc: { seq: 1 } },
-        { new: true, upsert: true },
-      );
-
-      const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
-      const daysOfWeek = [
-        "Sunday",
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-      ];
-
-      const newSessionDateTime = new Date(
-        `${nextDate.toISOString().split("T")[0]}T${cancelledSession.sessionTime}:00`,
-      );
-
-      await Session.create({
-        patientId: cancelledSession.patientId,
-        physioId: cancelledSession.physioId,
-        sessionDate: nextDate,
-        sessionDateTime: newSessionDateTime, // ADD
-        sessionTime: cancelledSession.sessionTime,
-        sessionStatusId: new mongoose.Types.ObjectId(
-          "691ecb36b87c5c57dead47a7",
-        ),
-        sessionDay: daysOfWeek[nextDate.getDay()],
-        sessionCode: formattedCode,
-      });
     }
 
     try {
@@ -604,7 +584,7 @@ exports.SessionCancel = async (req, res) => {
               patient?.patientName || "Patient"
             } has been cancelled and the Reason is ${
               cancelledSession.sessionCancelReason
-            } for the date of ${cancelledSession.sessionDate.toLocaleDateString()}. A replacement session has been scheduled.`,
+            } for the date of ${cancelledSession.sessionDate.toLocaleDateString()}.`,
             type: "general",
             status: "unseen",
             meta: {

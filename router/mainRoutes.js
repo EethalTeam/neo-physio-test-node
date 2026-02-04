@@ -21,10 +21,18 @@ router.post("/Lead/deleteLead", LeadControllers.deleteLead);
 router.post("/Lead/QualifyLead", LeadControllers.QualifyLead);
 
 //Physio
-router.post("/Physio/createPhysio",physioControllers.physioUploadMiddleware, physioControllers.createPhysio);
+router.post(
+  "/Physio/createPhysio",
+  physioControllers.physioUploadMiddleware,
+  physioControllers.createPhysio,
+);
 router.post("/Physio/getAllPhysio", physioControllers.getAllPhysios);
 router.post("/Physio/getSinglePhysio", physioControllers.getPhysioById);
-router.post("/Physio/updatePhysio",physioControllers.physioUploadMiddleware, physioControllers.updatePhysio);
+router.post(
+  "/Physio/updatePhysio",
+  physioControllers.physioUploadMiddleware,
+  physioControllers.updatePhysio,
+);
 router.post("/Physio/deletePhysio", physioControllers.deletePhysio);
 //physio login
 
@@ -80,6 +88,10 @@ router.post("/Session/sessionStop", SessionControllers.sessionStop);
 router.post(
   "/Session/deleteDuplicateSession",
   SessionControllers.deleteDuplicateSession,
+);
+router.post(
+  "/Session/sessionCancelRevert",
+  SessionControllers.sessionCancelRevert,
 );
 //Session Start and End
 

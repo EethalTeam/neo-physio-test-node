@@ -199,15 +199,15 @@ exports.getAllPhysios = async (req, res) => {
       // .limit(limit)
       .sort({ createdAt: -1 });
 
-    physios = physios.map((p) => {
-      if (p.physioPic) {
-        const filePath = path.join(__dirname, "../physioPic", p.physioPic);
-        if (!fs.existsSync(filePath)) {
-          p.physioPic = null;
-        }
-      }
-      return p;
-    });
+    // physios = physios.map((p) => {
+    //   if (p.physioPic) {
+    //     const filePath = path.join(__dirname, "../physioPic", p.physioPic);
+    //     if (!fs.existsSync(filePath)) {
+    //       p.physioPic = null;
+    //     }
+    //   }
+    //   return p;
+    // });
     const totalPhysios = await Physio.countDocuments({ isActive: true });
 
     res.status(200).json({
