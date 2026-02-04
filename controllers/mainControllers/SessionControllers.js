@@ -500,38 +500,18 @@ exports.sessionStop = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-exports.sessionCancelRevert = async (req, res) => {
-  try {
-    const { sessionId } = req.body;
-
-    const scheduledStatus = await SessionStatus.findOne({
-      sessionStatusName: "Scheduled",
-    });
-
-    if (!scheduledStatus) {
-      return res.status(400).json({ error: "Scheduled status not found" });
-    }
-
-    await Session.findByIdAndUpdate(sessionId, {
-      sessionStatusId: scheduledStatus._id,
-      cancelledReason: "",
-      sessionFeedbackCons: "",
-      cancelledKms: 0,
-    });
-
-    res.json({
-      success: true,
-      message: "Session reverted successfully",
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Revert failed" });
-  }
-};
 
 exports.SessionCancel = async (req, res) => {
   try {
-    const { _id, action, cancelledKms, cancelledReason } = req.body;
+    const {
+      _id,
+      action,
+      physioId,
+      cancelledKms,
+      userRole,
+      physioName,
+      cancelledReason,
+    } = req.body;
     console.log(cancelledReason, "cancelledReason");
     const Status = await SessionStatus.findOne({ sessionStatusName: action });
     if (!Status) {
@@ -584,7 +564,7 @@ exports.SessionCancel = async (req, res) => {
               patient?.patientName || "Patient"
             } has been cancelled and the Reason is ${
               cancelledSession.sessionCancelReason
-            } for the date of ${cancelledSession.sessionDate.toLocaleDateString()}.`,
+            } for the date of ${cancelledSession.sessionDate.toLocaleDateString()} - ${userRole} (${physioName}).`,
             type: "general",
             status: "unseen",
             meta: {
@@ -806,5 +786,33 @@ exports.SessionEnd = async (req, res) => {
   } catch (error) {
     console.error("Error Ending Session:", error);
     res.status(500).json({ message: error.message });
+  }
+};
+exports.sessionCancelRevert = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+
+    const scheduledStatus = await SessionStatus.findOne({
+      sessionStatusName: "Scheduled",
+    });
+
+    if (!scheduledStatus) {
+      return res.status(400).json({ error: "Scheduled status not found" });
+    }
+
+    await Session.findByIdAndUpdate(sessionId, {
+      sessionStatusId: scheduledStatus._id,
+      cancelledReason: "",
+      sessionFeedbackCons: "",
+      cancelledKms: 0,
+    });
+
+    res.json({
+      success: true,
+      message: "Session reverted successfully",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Revert failed" });
   }
 };
