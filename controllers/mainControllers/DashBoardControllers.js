@@ -9,8 +9,21 @@ const PatientModel = require("../../model/masterModels/Patient");
 const SessionStatus = require("../../model/masterModels/SessionStatus");
 exports.getAllDashBoard = async (req, res) => {
   try {
-    let lead = await Leads.find();
-    let patient = await Patients.find();
+    let { fromDate, toDate } = req.body;
+    let dateQuery = {};
+
+    if (fromDate && !toDate) {
+      toDate = fromDate;
+      dateQuery = {
+        createdAt: {
+          $gte: new Date(fromDate + "T00:00:00.000Z"),
+          $lte: new Date(toDate + "T23:59:59.999Z"),
+        },
+      };
+    }
+
+    let lead = await Leads.find(dateQuery);
+    let patient = await Patients.find(dateQuery);
     let pendingreviews = await Review.find()
       .populate("reviewStatusId") // populates the status object
       .then((reviews) =>
@@ -27,19 +40,25 @@ exports.getAllDashBoard = async (req, res) => {
             r.reviewStatusId?.reviewStatusName?.toLowerCase() === "completed",
         ),
       );
-    const completedStatus = await SessionStatus.findOne({
+    let completedStatus = await SessionStatus.findOne({
       sessionStatusName: "Completed",
     });
 
     // Get the total number of completed sessions
-    const completedSessionsCount = await Session.find({
+    let completedSessionsCount = await Session.find({
       sessionStatusId: completedStatus._id,
     });
+    let startDate;
+    let endDate;
 
-    let year = new Date().getFullYear();
-    let month = new Date().getMonth();
-    let startDate = new Date(year, month, 1);
-    let endDate = new Date(year, month + 1, 1);
+    if (fromDate && toDate) {
+      startDate = new Date(fromDate + "T00:00:00.000Z");
+      endDate = new Date(toDate + "T23:59:59.999Z");
+    } else {
+      const now = new Date();
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    }
 
     let patientRecover = await PatientModel.find({
       recoveredType: "Patient Recovered",
@@ -59,8 +78,15 @@ exports.getAllDashBoard = async (req, res) => {
     //   sessionToTime: { $ne: null },
     // });
 
-    const sessionCompleted = await Session.countDocuments({
+    let sessionCompleted = await Session.find({
       sessionToTime: { $exists: true, $ne: null },
+      ...(fromDate &&
+        toDate && {
+          sessionDate: {
+            $gte: startDate,
+            $lte: endDate,
+          },
+        }),
     });
 
     const start = performance.now();
@@ -95,7 +121,7 @@ exports.getAllDashBoard = async (req, res) => {
       completedReview: completedReview.length,
       patientRecover: patientRecover.length,
       sessionCompleted: sessionCompleted.length,
-      sessionCompleted: completedSessionsCount.length,
+      // sessionCompleted: completedSessionsCount.length,
       todaysession: todaysession.length,
     };
 
