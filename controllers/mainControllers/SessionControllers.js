@@ -651,13 +651,6 @@ exports.SessionEnd = async (req, res) => {
     } else {
       sessionend.sessionStatusId = Status._id;
     }
-    const sessionCounter = Session.find({ sessionStatusId: Status._id });
-
-    if (sessionCounter.length > 0) {
-      sessionend.sessionCount = sessionCounter.length + 1;
-    } else {
-      sessionend.sessionCount = 1;
-    }
     const session = await Session.findByIdAndUpdate(
       _id,
       { $set: sessionend },
