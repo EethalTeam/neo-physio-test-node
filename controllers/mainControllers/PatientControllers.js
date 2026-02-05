@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Patient = require("../../model/masterModels/Patient");
 const Session = require("../../model/masterModels/Session");
 const Counter = require("../../model/masterModels/Counter");
+const SessionModel = require("../../model/masterModels/Session");
 
 // Create a new Patient
 exports.createPatients = async (req, res) => {
@@ -268,6 +269,17 @@ exports.getAllPatients = async (req, res) => {
       .populate("patientGenderId", "genderName")
       .populate("MedicalHistoryAndRiskFactor.RiskFactorID", "RiskFactorName")
       .populate("physioId", "physioName");
+    const patientIds = patients.map((p) => p._id);
+
+    const sessionCounts = await Session.find(
+      { patientId: { $in: patientIds } },
+      "patientId sessionCount",
+    );
+    const sessionCountMap = {};
+
+    sessionCounts.forEach((s) => {
+      sessionCountMap[s.patientId.toString()] = s.sessionCount;
+    });
 
     if (!patients || patients.length === 0) {
       return res.status(200).json([]); // Return empty array if no sessions on that date
@@ -276,6 +288,7 @@ exports.getAllPatients = async (req, res) => {
     const response = patients.map((p) => ({
       ...p._doc,
       FeesTypeName: p.FeesTypeId?.feesTypeName || "N/A",
+      sessionCount: sessionCountMap[p._id.toString()] || 0,
     }));
 
     res.status(200).json(response);
