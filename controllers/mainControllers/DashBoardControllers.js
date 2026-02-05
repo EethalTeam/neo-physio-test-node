@@ -32,7 +32,7 @@ exports.getAllDashBoard = async (req, res) => {
             r.reviewStatusId?.reviewStatusName?.toLowerCase() === "pending",
         ),
       );
-    console.log(pendingreviews, "pendingreviews");
+    // console.log(pendingreviews, "pendingreviews");
     let completedReview = await Review.find()
       .populate("reviewStatusId") // populates the status object
       .then((reviews) =>

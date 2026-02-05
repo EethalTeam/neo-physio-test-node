@@ -185,13 +185,20 @@ exports.getAllPhysios = async (req, res) => {
     // const limit = parseInt(req.body.limit) || 10;
     // const skip = (page - 1) * limit;
     const { type } = req.body;
+
     const filter = {
-      roleId: new mongoose.Types.ObjectId("6926ca2ccddb76460d277717"),
+      roleId: {
+        $in: [
+          new mongoose.Types.ObjectId("6926ca2ccddb76460d277717"),
+          new mongoose.Types.ObjectId("6926ca19cddb76460d277710"),
+        ],
+      },
     };
+
     if (type === undefined) {
       filter.isActive = true;
     }
-    console.log(filter, "filter");
+
     let physios = await Physio.find(filter)
       .populate("physioGenderId")
       .populate("roleId", "RoleName")
@@ -298,6 +305,7 @@ exports.loginPhysio = async (req, res) => {
       "roleId",
       "RoleName",
     );
+    console.log(physio, "physio");
     if (!physio) {
       return res.status(404).json({ message: "Invalid Employee Code" });
     }
