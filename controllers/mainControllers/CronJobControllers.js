@@ -4,6 +4,8 @@ const Session = require("../../model/masterModels/Session");
 const Review = require("../../model/masterModels/Review");
 const Patient = require("../../model/masterModels/Patient");
 const Notification = require("../../model/masterModels/Notification");
+const SessionStatus = require("../models/SessionStatus");
+const PetrolAllowance = require("../models/PetrolAllowance");
 const Physio = require("../../model/masterModels/Physio");
 const RoleBased = require("../../model/masterModels/RBAC");
 const Counter = require("../../model/masterModels/Counter");
@@ -63,7 +65,7 @@ async function broadcastNotification(admins, message, type, meta, io) {
 }
 
 exports.initSessionCron = (io) => {
-  // Note: Kept your specific test time '17 20' (8:17 PM)
+  
   cron.schedule(
     "0 20 * * 1-6",
     async () => {
@@ -84,7 +86,7 @@ exports.initSessionCron = (io) => {
           "694f85db081ee43cab2d4c8f",
         );
 
-        // 1. Get Admins
+        
         const roles = await RoleBased.find({
           RoleName: { $in: ["Admin", "SuperAdmin", "HOD"] },
         });
@@ -102,7 +104,7 @@ exports.initSessionCron = (io) => {
           `Found ${admins.length} eligible admins: ${admins.map((a) => a.physioName).join(", ")}`,
         );
 
-        // 2. Query Pending Sessions
+        
         const pendingSessions = await Session.find({
           sessionDate: { $gte: start, $lte: end },
           sessionStatusId: { $nin: [sessionCompletedId, sessionCancelledId] },
@@ -112,7 +114,7 @@ exports.initSessionCron = (io) => {
 
         console.log(`📊 Pending Sessions Found: ${pendingSessions.length}`);
 
-        // 3. Query Pending Reviews
+        
         const pendingReviews = await Review.find({
           reviewDate: { $gte: start, $lte: end },
           reviewStatusId: { $ne: reviewCompletedId },
@@ -122,7 +124,7 @@ exports.initSessionCron = (io) => {
 
         console.log(`📊 Pending Reviews Found: ${pendingReviews.length}`);
 
-        // 4. Process Sessions
+        
         for (const sess of pendingSessions) {
           const pName = sess.patientId?.patientName || "N/A";
           const phName = sess.physioId?.physioName || "N/A";
@@ -136,7 +138,7 @@ exports.initSessionCron = (io) => {
           );
         }
 
-        // 5. Process Reviews
+        
         for (const rev of pendingReviews) {
           const pName = rev.patientId?.patientName || "N/A";
           const phName = rev.physioId?.physioName || "N/A";
@@ -159,9 +161,9 @@ exports.initSessionCron = (io) => {
   );
 };
 
-// --- 5 AM: DAILY SESSION GENERATION ---
+
 exports.initDailySessionGeneration = () => {
-  // Logic remains the same, but ensure mongoose is at top of file
+  
   cron.schedule(
     "0 5 * * 1-6",
     async () => {
@@ -223,5 +225,165 @@ exports.initDailySessionGeneration = () => {
       }
     },
     { timezone: "Asia/Kolkata" },
+  );
+};
+
+exports.initScheduledReviewGeneration = () => {
+  cron.schedule(
+    "30 5 * * 1-6", 
+    async () => {
+      try {
+        console.log("🚀 Starting Scheduled Review Generation (6 AM IST)...");
+
+        const [reviewTypeDefault, reviewStatusPending] = await Promise.all([
+          ReviewType.findOne({ reviewTypeName: "General" }),
+          ReviewStatus.findOne({ reviewStatusName: "Pending" }),
+        ]);
+
+        if (!reviewTypeDefault || !reviewStatusPending) {
+          console.error("❌ Review Type or Status defaults not found.");
+          return;
+        }
+
+        const now = new Date();
+        const todayStr = now.toLocaleDateString('en-CA'); 
+        
+        const tomorrow = new Date(now);
+        tomorrow.setDate(now.getDate() + 1);
+        const tomorrowStr = tomorrow.toLocaleDateString('en-CA');
+
+        const activePatients = await Patient.find({
+          isRecovered: false,
+          reviewFrequency: { $exists: true, $gt: 0 },
+          sessionStartDate: { $exists: true, $lte: tomorrow },
+        });
+
+        for (const patient of activePatients) {
+          const lastReview = await Review.findOne({ patientId: patient._id })
+            .sort({ reviewDate: -1 });
+
+          let nextReviewDueDate;if (lastReview) {
+            const lastDate = new Date(lastReview.reviewDate);
+            nextReviewDueDate = new Date(lastDate);
+            nextReviewDueDate.setDate(lastDate.getDate() + patient.reviewFrequency);
+          } else {
+            const startDate = new Date(patient.sessionStartDate);
+            nextReviewDueDate = new Date(startDate);
+            nextReviewDueDate.setDate(startDate.getDate() + patient.reviewFrequency);
+          }
+          if (nextReviewDueDate.getDay() === 0) {
+            nextReviewDueDate.setDate(nextReviewDueDate.getDate() + 1);
+            console.log(`📅 Sunday detected for ${patient.patientName}. Moving to Monday.`);
+          }
+          
+
+          const dueDateStr = nextReviewDueDate.toLocaleDateString('en-CA');
+
+          if (dueDateStr === todayStr || dueDateStr === tomorrowStr) {
+            const alreadyExists = await Review.findOne({
+              patientId: patient._id,
+              reviewDate: nextReviewDueDate
+            });
+
+            if (!alreadyExists) {
+              await Review.create({
+                patientId: patient._id,
+                physioId: patient.physioId,
+                reviewDate: nextReviewDueDate,
+                reviewStatusId: reviewStatusPending._id,
+                reviewTypeId: reviewTypeDefault._id,
+              });
+              console.log(`✅ Review generated for ${patient.patientName} on ${dueDateStr}`);
+            }
+          }
+        }
+        console.log("[6AM Cron] Review generation cycle complete.");
+      } catch (error) {
+        console.error("❌ Error in 6AM Review Generation Job:", error);
+      }
+    },
+    { timezone: "Asia/Kolkata" }
+  );
+};
+
+exports.initReturnJourneyAllowanceCron = () => {
+  
+  cron.schedule(
+    "30 21 * * *",
+    async () => {
+      try {
+        console.log("🚀 Starting Return Journey Petrol Allowance Calculation (7:30 PM IST)...");
+
+        
+        const completedStatus = await SessionStatus.findOne({ sessionStatusName: "Completed" });
+        if (!completedStatus) {
+          console.error("❌ 'Completed' status not found in database.");
+          return;
+        }
+
+        
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const end = new Date();
+        end.setHours(23, 59, 59, 999);
+
+        const allowanceDate = new Date();
+        allowanceDate.setHours(12, 0, 0, 0); 
+
+        
+        const completedSessions = await Session.find({
+          sessionDate: { $gte: start, $lte: end },
+          sessionStatusId: completedStatus._id,
+        })
+          .populate("patientId")
+          .sort({ sessionToTime: 1 }); 
+
+        if (completedSessions.length === 0) {
+          console.log("ℹ️ No completed sessions found for today.");
+          return;
+        }
+
+        
+        const latestSessionByPhysio = {};
+
+        completedSessions.forEach((session) => {
+          
+          latestSessionByPhysio[session.physioId.toString()] = session;
+        });
+
+        
+        const updatePromises = Object.values(latestSessionByPhysio).map(async (lastSession) => {
+          const patientData = lastSession.patientId;
+
+          if (patientData && patientData.KmsfLPatienttoHub > 0) {
+            const returnKms = patientData.KmsfLPatienttoHub;
+
+            await PetrolAllowance.findOneAndUpdate(
+              { 
+                physioId: lastSession.physioId, 
+                date: allowanceDate 
+              },
+              {
+                $inc: {
+                  completedKms: returnKms,
+                  finalDailyKms: returnKms,
+                },
+              },
+              { new: true, upsert: true }
+            );
+
+            console.log(
+              `✅ Added ${returnKms}km return journey for Physio ID: ${lastSession.physioId} (Patient: ${patientData.patientName})`
+            );
+          }
+        });
+
+        await Promise.all(updatePromises);
+        console.log("🏁 Return Journey Allowance calculation complete.");
+      } catch (error) {
+        console.error("❌ Error in Return Journey Cron:", error);
+      }
+    },
+    { timezone: "Asia/Kolkata" }
   );
 };

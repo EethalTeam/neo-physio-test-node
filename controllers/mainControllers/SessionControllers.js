@@ -756,10 +756,6 @@ exports.SessionEnd = async (req, res) => {
         kmsToAdd = patient.kmsFromPrevious || 0;
       }
 
-      if (patient.KmsfLPatienttoHub && patient.KmsfLPatienttoHub > 0) {
-        kmsToAdd += patient.KmsfLPatienttoHub;
-      }
-
       const allowanceDate = new Date(session.sessionDate);
       allowanceDate.setHours(12, 0, 0, 0);
 

@@ -70,6 +70,8 @@ const io = new Server(server, {
 
 CronJobControllers.initSessionCron(io);
 CronJobControllers.initDailySessionGeneration(io);
+CronJobControllers.initScheduledReviewGeneration(io);
+CronJobControllers.initReturnJourneyAllowanceCron(io);
 // const io = new Server(server, {
 //   cors: {
 //     origin: "https://enishrm.grss.in",
