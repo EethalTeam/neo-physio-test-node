@@ -12,7 +12,7 @@ exports.createReview = async (req, res) => {
     const {
       patientId,
       physioId,
-      // sessionId,
+      sessionId,
       reviewDate,
       // reviewTime,
       reviewTypeId,
@@ -28,9 +28,9 @@ exports.createReview = async (req, res) => {
       !patientId ||
       !physioId ||
       // !sessionId ||
-      !reviewTypeId ||
-      !reviewStatusId ||
-      !Satisfaction
+      !reviewTypeId
+      // !reviewStatusId ||
+      // !Satisfaction
     ) {
       return res.status(400).json({ message: "Required fields missing" });
     }
@@ -46,34 +46,34 @@ exports.createReview = async (req, res) => {
     }
 
     //CHECK EXISTING REVIEW (ONE PER SESSION)
-    const existingReview = await Review.findOne({
-      sessionId,
-      reviewTypeId,
-    });
+    // const existingReview = await Review.findOne({
+    //   sessionId,
+    //   reviewTypeId,
+    // });
 
-    if (existingReview) {
-      existingReview.feedback = feedback;
-      existingReview.redFlags = redFlags;
-      existingReview.reviewDate = reviewDate;
-      existingReview.reviewTime = reviewTime;
+    // if (existingReview) {
+    //   existingReview.feedback = feedback;
+    //   existingReview.redFlags = redFlags;
+    //   existingReview.reviewDate = reviewDate;
+    //   existingReview.reviewTime = reviewTime;
 
-      // ensure status always exists
-      existingReview.reviewStatusId =
-        existingReview.reviewStatusId || pendingStatus._id;
+    //   // ensure status always exists
+    //   existingReview.reviewStatusId =
+    //     existingReview.reviewStatusId || pendingStatus._id;
 
-      await existingReview.save();
+    //   await existingReview.save();
 
-      return res.status(200).json({
-        message: "Review updated successfully",
-        data: existingReview,
-      });
-    }
+    //   return res.status(200).json({
+    //     message: "Review updated successfully",
+    //     data: existingReview,
+    //   });
+    // }
     const review = new Review({
       patientId,
       physioId,
       sessionId,
       reviewDate,
-      reviewTime,
+      // reviewTime,
       reviewTypeId,
       redFlags,
       feedback,
@@ -212,7 +212,7 @@ exports.updateReview = async (req, res) => {
       patientId,
       physioId,
       reviewDate,
-      reviewTime,
+      // reviewTime,
       reviewTypeId,
       redFlags,
       feedback,
@@ -230,7 +230,7 @@ exports.updateReview = async (req, res) => {
         patientId,
         physioId,
         reviewDate,
-        reviewTime,
+        // reviewTime,
         reviewTypeId,
         redFlags: redFlags || [],
         feedback,
