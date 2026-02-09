@@ -225,7 +225,7 @@ exports.initDailySessionGeneration = () => {
 
 exports.initScheduledReviewGeneration = () => {
   cron.schedule(
-    "12 13 * * 1-6",
+    "37 13 * * 1-6",
     async () => {
       try {
         console.log(
