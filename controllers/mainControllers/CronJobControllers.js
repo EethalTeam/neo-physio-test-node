@@ -225,7 +225,7 @@ exports.initDailySessionGeneration = () => {
 
 exports.initScheduledReviewGeneration = () => {
   cron.schedule(
-    "00 5 * * 1-6",
+    "30 12 * * 1-6",
     async () => {
       try {
         console.log("🚀 Starting Scheduled Review Generation (6 AM IST)...");
@@ -235,11 +235,24 @@ exports.initScheduledReviewGeneration = () => {
           ReviewStatus.findOne({ reviewStatusName: "Pending" }),
         ]);
 
-        const todayIST = moment.tz("Asia/Kolkata").startOf("day");
-        const tomorrowIST = moment
-          .tz("Asia/Kolkata")
-          .add(1, "days")
-          .startOf("day");
+        // --- THE LIVE SERVER FIX: Manual IST Calculation ---
+        const getISTDate = (offsetDays = 0) => {
+          const now = new Date();
+          // Convert current server time to IST milliseconds
+          const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+          const istDate = new Date(istTime);
+          istDate.setDate(istDate.getDate() + offsetDays);
+
+          // Return a string YYYY-MM-DD that is strictly IST
+          return istDate.toISOString().split("T")[0];
+        };
+
+        const todayStrIST = getISTDate(0); // "2026-02-09"
+        const tomorrowStrIST = getISTDate(1); // "2026-02-10"
+
+        console.log(
+          `Live Server IST Today: ${todayStrIST}, Tomorrow: ${tomorrowStrIST}`,
+        );
 
         const activePatients = await Patient.find({
           isRecovered: false,
@@ -251,64 +264,64 @@ exports.initScheduledReviewGeneration = () => {
             patientId: patient._id,
           }).sort({ reviewDate: -1 });
 
-          let nextReviewDueDate;
+          let baseDate = lastReview
+            ? lastReview.reviewDate
+            : patient.sessionStartDate;
+          if (!baseDate) continue;
 
-          if (lastReview) {
-            nextReviewDueDate = moment
-              .tz(lastReview.reviewDate, "Asia/Kolkata")
-              .startOf("day")
-              .add(patient.reviewFrequency, "days");
-          } else if (patient.sessionStartDate) {
-            nextReviewDueDate = moment
-              .tz(patient.sessionStartDate, "Asia/Kolkata")
-              .startOf("day")
-              .add(patient.reviewFrequency, "days");
-          } else {
-            continue;
+          // Calculate Next Due Date based on IST
+          let nextDue = new Date(
+            new Date(baseDate).getTime() + 5.5 * 60 * 60 * 1000,
+          );
+          nextDue.setDate(nextDue.getDate() + patient.reviewFrequency);
+
+          // Sunday Check
+          if (nextDue.getUTCDay() === 0) {
+            nextDue.setDate(nextDue.getDate() + 1);
           }
 
-          if (nextReviewDueDate.day() === 0) {
-            nextReviewDueDate.add(1, "days");
-            console.log(
-              `📅 Sunday detected for ${patient.patientName}. Moving to Monday: ${nextReviewDueDate.format("YYYY-MM-DD")}`,
-            );
-          }
+          const nextDueStrIST = nextDue.toISOString().split("T")[0];
 
-          const isDueToday = nextReviewDueDate.isSame(todayIST, "day");
-          const isDueTomorrow = nextReviewDueDate.isSame(tomorrowIST, "day");
+          if (
+            nextDueStrIST === todayStrIST ||
+            nextDueStrIST === tomorrowStrIST
+          ) {
+            // Check if exists for this IST day
+            // We search using regex or string conversion to avoid UTC mismatch
+            const startOfDay = new Date(nextDueStrIST);
+            const endOfDay = new Date(nextDueStrIST);
+            endOfDay.setHours(23, 59, 59, 999);
 
-          if (isDueToday || isDueTomorrow) {
             const alreadyExists = await Review.findOne({
               patientId: patient._id,
-              reviewDate: {
-                $gte: nextReviewDueDate.toDate(),
-                $lt: moment(nextReviewDueDate).add(1, "days").toDate(),
-              },
+              reviewDate: { $gte: startOfDay, $lte: endOfDay },
             });
 
             if (!alreadyExists) {
+              // Save as 18:30 UTC (which is 00:00 IST)
+              const saveDate = new Date(nextDueStrIST);
+              saveDate.setMinutes(saveDate.getMinutes() - 330);
+
               await Review.create({
                 patientId: patient._id,
                 physioId: patient.physioId,
-                reviewDate: nextReviewDueDate.toDate(),
+                reviewDate: saveDate,
                 reviewStatusId: reviewStatusPending._id,
                 reviewTypeId: reviewTypeDefault._id,
               });
               console.log(
-                `✅ Review created for ${patient.patientName} on ${nextReviewDueDate.format("DD/MM/YYYY")}`,
+                `✅ Success for ${patient.patientName} on ${nextDueStrIST}`,
               );
             }
           }
         }
-        console.log("[6AM Cron] Cycle complete.");
       } catch (error) {
-        console.error("❌ Error in Review Generation Job:", error);
+        console.error("❌ Live Server Cron Error:", error);
       }
     },
     { timezone: "Asia/Kolkata" },
   );
 };
-
 exports.initReturnJourneyAllowanceCron = () => {
   cron.schedule(
     "30 21 * * *",
