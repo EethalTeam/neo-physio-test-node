@@ -2,13 +2,16 @@ const cron = require("node-cron");
 const mongoose = require("mongoose");
 const Session = require("../../model/masterModels/Session");
 const Review = require("../../model/masterModels/Review");
+const ReviewType = require("../../model/masterModels/ReviewType");
 const Patient = require("../../model/masterModels/Patient");
+const ReviewStatus = require("../../model/masterModels/ReviewStatus");
 const Notification = require("../../model/masterModels/Notification");
 const SessionStatus = require("../../model/masterModels/SessionStatus");
 const PetrolAllowance = require("../../model/masterModels/PetrolAllowance");
 const Physio = require("../../model/masterModels/Physio");
 const RoleBased = require("../../model/masterModels/RBAC");
 const Counter = require("../../model/masterModels/Counter");
+const moment = require("moment-timezone");
 
 const getISTDateRange = () => {
   const now = new Date();
@@ -222,7 +225,7 @@ exports.initDailySessionGeneration = () => {
 
 exports.initScheduledReviewGeneration = () => {
   cron.schedule(
-    "30 5 * * 1-6",
+    "00 5 * * 1-6",
     async () => {
       try {
         console.log("🚀 Starting Scheduled Review Generation (6 AM IST)...");
@@ -232,22 +235,15 @@ exports.initScheduledReviewGeneration = () => {
           ReviewStatus.findOne({ reviewStatusName: "Pending" }),
         ]);
 
-        if (!reviewTypeDefault || !reviewStatusPending) {
-          console.error("❌ Review Type or Status defaults not found.");
-          return;
-        }
-
-        const now = new Date();
-        const todayStr = now.toLocaleDateString("en-CA");
-
-        const tomorrow = new Date(now);
-        tomorrow.setDate(now.getDate() + 1);
-        const tomorrowStr = tomorrow.toLocaleDateString("en-CA");
+        const todayIST = moment.tz("Asia/Kolkata").startOf("day");
+        const tomorrowIST = moment
+          .tz("Asia/Kolkata")
+          .add(1, "days")
+          .startOf("day");
 
         const activePatients = await Patient.find({
           isRecovered: false,
           reviewFrequency: { $exists: true, $gt: 0 },
-          sessionStartDate: { $exists: true, $lte: tomorrow },
         });
 
         for (const patient of activePatients) {
@@ -256,51 +252,57 @@ exports.initScheduledReviewGeneration = () => {
           }).sort({ reviewDate: -1 });
 
           let nextReviewDueDate;
+
           if (lastReview) {
-            const lastDate = new Date(lastReview.reviewDate);
-            nextReviewDueDate = new Date(lastDate);
-            nextReviewDueDate.setDate(
-              lastDate.getDate() + patient.reviewFrequency,
-            );
+            nextReviewDueDate = moment
+              .tz(lastReview.reviewDate, "Asia/Kolkata")
+              .startOf("day")
+              .add(patient.reviewFrequency, "days");
+          } else if (patient.sessionStartDate) {
+            nextReviewDueDate = moment
+              .tz(patient.sessionStartDate, "Asia/Kolkata")
+              .startOf("day")
+              .add(patient.reviewFrequency, "days");
           } else {
-            const startDate = new Date(patient.sessionStartDate);
-            nextReviewDueDate = new Date(startDate);
-            nextReviewDueDate.setDate(
-              startDate.getDate() + patient.reviewFrequency,
-            );
+            continue;
           }
-          if (nextReviewDueDate.getDay() === 0) {
-            nextReviewDueDate.setDate(nextReviewDueDate.getDate() + 1);
+
+          if (nextReviewDueDate.day() === 0) {
+            nextReviewDueDate.add(1, "days");
             console.log(
-              `📅 Sunday detected for ${patient.patientName}. Moving to Monday.`,
+              `📅 Sunday detected for ${patient.patientName}. Moving to Monday: ${nextReviewDueDate.format("YYYY-MM-DD")}`,
             );
           }
 
-          const dueDateStr = nextReviewDueDate.toLocaleDateString("en-CA");
+          const isDueToday = nextReviewDueDate.isSame(todayIST, "day");
+          const isDueTomorrow = nextReviewDueDate.isSame(tomorrowIST, "day");
 
-          if (dueDateStr === todayStr || dueDateStr === tomorrowStr) {
+          if (isDueToday || isDueTomorrow) {
             const alreadyExists = await Review.findOne({
               patientId: patient._id,
-              reviewDate: nextReviewDueDate,
+              reviewDate: {
+                $gte: nextReviewDueDate.toDate(),
+                $lt: moment(nextReviewDueDate).add(1, "days").toDate(),
+              },
             });
 
             if (!alreadyExists) {
               await Review.create({
                 patientId: patient._id,
                 physioId: patient.physioId,
-                reviewDate: nextReviewDueDate,
+                reviewDate: nextReviewDueDate.toDate(),
                 reviewStatusId: reviewStatusPending._id,
                 reviewTypeId: reviewTypeDefault._id,
               });
               console.log(
-                `✅ Review generated for ${patient.patientName} on ${dueDateStr}`,
+                `✅ Review created for ${patient.patientName} on ${nextReviewDueDate.format("DD/MM/YYYY")}`,
               );
             }
           }
         }
-        console.log("[6AM Cron] Review generation cycle complete.");
+        console.log("[6AM Cron] Cycle complete.");
       } catch (error) {
-        console.error("❌ Error in 6AM Review Generation Job:", error);
+        console.error("❌ Error in Review Generation Job:", error);
       }
     },
     { timezone: "Asia/Kolkata" },
