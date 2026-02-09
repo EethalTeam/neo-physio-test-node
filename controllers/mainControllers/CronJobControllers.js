@@ -225,7 +225,7 @@ exports.initDailySessionGeneration = () => {
 
 exports.initScheduledReviewGeneration = () => {
   cron.schedule(
-    "30 12 * * 1-6",
+    "48 12 * * 1-6",
     async () => {
       try {
         console.log("🚀 Starting Scheduled Review Generation (6 AM IST)...");
@@ -322,6 +322,7 @@ exports.initScheduledReviewGeneration = () => {
     { timezone: "Asia/Kolkata" },
   );
 };
+
 exports.initReturnJourneyAllowanceCron = () => {
   cron.schedule(
     "30 21 * * *",
