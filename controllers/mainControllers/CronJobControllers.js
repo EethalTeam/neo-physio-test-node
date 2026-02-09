@@ -225,98 +225,82 @@ exports.initDailySessionGeneration = () => {
 
 exports.initScheduledReviewGeneration = () => {
   cron.schedule(
-    "0 13 * * 1-6",
+    "12 13 * * 1-6",
     async () => {
       try {
-        console.log("🚀 Starting Scheduled Review Generation (6 AM IST)...");
+        console.log(
+          "🚀 Starting Scheduled Review Generation (Strict ISO UTC Fix)...",
+        );
 
         const [reviewTypeDefault, reviewStatusPending] = await Promise.all([
           ReviewType.findOne({ reviewTypeName: "General" }),
           ReviewStatus.findOne({ reviewStatusName: "Pending" }),
         ]);
 
-        // --- THE LIVE SERVER FIX: Manual IST Calculation ---
-        const getISTDate = (offsetDays = 0) => {
-          const now = new Date();
-          // Convert current server time to IST milliseconds
-          const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
-          const istDate = new Date(istTime);
-          istDate.setDate(istDate.getDate() + offsetDays);
+        // 1. Get Today and Tomorrow in IST format, but as strings
+        const now = new Date();
+        const istOffset = 5.5 * 60 * 60 * 1000;
+        const todayIST = new Date(now.getTime() + istOffset);
+        const todayStr = todayIST.toISOString().split("T")[0]; // "2026-02-09"
 
-          // Return a string YYYY-MM-DD that is strictly IST
-          return istDate.toISOString().split("T")[0];
-        };
+        const tomorrowIST = new Date(todayIST.getTime() + 24 * 60 * 60 * 1000);
+        const tomorrowStr = tomorrowIST.toISOString().split("T")[0]; // "2026-02-10"
 
-        const todayStrIST = getISTDate(0); // "2026-02-09"
-        const tomorrowStrIST = getISTDate(1); // "2026-02-10"
-
-        console.log(
-          `Live Server IST Today: ${todayStrIST}, Tomorrow: ${tomorrowStrIST}`,
-        );
-
-        const activePatients = await Patient.find({
-          isRecovered: false,
-          reviewFrequency: { $exists: true, $gt: 0 },
-        });
+        const activePatients = await Patient.find({ isRecovered: false });
 
         for (const patient of activePatients) {
+          if (!patient.reviewFrequency || !patient.sessionStartDate) continue;
+
           const lastReview = await Review.findOne({
             patientId: patient._id,
           }).sort({ reviewDate: -1 });
 
+          // Determine the base day (stripping any existing time)
           let baseDate = lastReview
             ? lastReview.reviewDate
             : patient.sessionStartDate;
-          if (!baseDate) continue;
+          let baseDateStr = new Date(baseDate).toISOString().split("T")[0];
 
-          // Calculate Next Due Date based on IST
-          let nextDue = new Date(
-            new Date(baseDate).getTime() + 5.5 * 60 * 60 * 1000,
+          let calculationDate = new Date(baseDateStr + "T00:00:00.000Z");
+          calculationDate.setUTCDate(
+            calculationDate.getUTCDate() + patient.reviewFrequency,
           );
-          nextDue.setDate(nextDue.getDate() + patient.reviewFrequency);
 
-          // Sunday Check
-          if (nextDue.getUTCDay() === 0) {
-            nextDue.setDate(nextDue.getDate() + 1);
+          // Sunday Handling
+          if (calculationDate.getUTCDay() === 0) {
+            calculationDate.setUTCDate(calculationDate.getUTCDate() + 1);
           }
 
-          const nextDueStrIST = nextDue.toISOString().split("T")[0];
+          const nextDueStr = calculationDate.toISOString().split("T")[0];
 
-          if (
-            nextDueStrIST === todayStrIST ||
-            nextDueStrIST === tomorrowStrIST
-          ) {
-            // Check if exists for this IST day
-            // We search using regex or string conversion to avoid UTC mismatch
-            const startOfDay = new Date(nextDueStrIST);
-            const endOfDay = new Date(nextDueStrIST);
-            endOfDay.setHours(23, 59, 59, 999);
+          // 2. Comparison against IST Strings
+          if (nextDueStr === todayStr || nextDueStr === tomorrowStr) {
+            // 3. FORCE UTC MIDNIGHT STRING
+            // This is the specific fix to prevent the 18:30:00 shift
+            const finalISODate = nextDueStr + "T00:00:00.000Z";
 
             const alreadyExists = await Review.findOne({
               patientId: patient._id,
-              reviewDate: { $gte: startOfDay, $lte: endOfDay },
+              reviewDate: new Date(finalISODate),
             });
 
             if (!alreadyExists) {
-              // Save as 18:30 UTC (which is 00:00 IST)
-              const saveDate = new Date(nextDueStrIST);
-              saveDate.setMinutes(saveDate.getMinutes() - 330);
-
               await Review.create({
                 patientId: patient._id,
                 physioId: patient.physioId,
-                reviewDate: saveDate,
+                reviewDate: finalISODate, // Mongoose accepts the string and stores it exactly
                 reviewStatusId: reviewStatusPending._id,
                 reviewTypeId: reviewTypeDefault._id,
               });
               console.log(
-                `✅ Success for ${patient.patientName} on ${nextDueStrIST}`,
+                `✅ Fixed Save for ${patient.patientName}: ${finalISODate}`,
               );
             }
           }
         }
+        console.log("[6AM Cron] Review generation complete.");
       } catch (error) {
-        console.error("❌ Live Server Cron Error:", error);
+        console.error("❌ Cron Error:", error);
       }
     },
     { timezone: "Asia/Kolkata" },
