@@ -548,9 +548,42 @@ exports.updatePatients = async (req, res) => {
   }
 };
 
+exports.updatePatientFeedbacks = async (req, res) => {
+  try {
+    const { patientId, Feedback, Satisfaction } = req.body;
+
+    if (!patientId) {
+      return res.status(400).json({ message: "patientId is required" });
+    }
+
+    const patient = await Patient.findByIdAndUpdate(
+      patientId,
+      {
+        $set: {
+          Feedback,
+          Satisfaction,
+        },
+      },
+      { new: true },
+    );
+
+    if (!patient) {
+      return res.status(404).json({ message: "Patient not found" });
+    }
+
+    res.status(200).json({
+      message: "Feedback updated successfully",
+      data: patient,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 exports.updatePatientGoals = async (req, res) => {
   try {
-    const { patientId, shortTermGoals, longTermGoals } = req.body;
+    const { patientId, shortTermGoals, goalDuration, feedback, satisfaction } =
+      req.body;
 
     if (!patientId) {
       return res.status(400).json({
@@ -559,30 +592,42 @@ exports.updatePatientGoals = async (req, res) => {
       });
     }
 
-    const updatedPatient = await Patient.findByIdAndUpdate(
-      patientId,
-      {
-        shortTermGoals,
-        longTermGoals,
-        updatedAt: new Date(),
-      },
-      {
-        new: true,
-        runValidators: true,
-      },
-    );
-
-    if (!updatedPatient) {
+    const patient = await Patient.findById(patientId);
+    if (!patient) {
       return res.status(404).json({
         success: false,
         message: "Patient not found",
       });
     }
 
+    if (patient.shortTermGoals) {
+      const prevGoalEntry = {
+        goal: patient.shortTermGoals,
+        feedback: patient.Feedback || "",
+        satisfaction: patient.Satisfaction ?? null,
+        status: "Reviewed & Completed",
+        date: new Date().toISOString().split("T")[0],
+      };
+      console.log(prevGoalEntry, "prevGoalEntry");
+      patient.goalLog = patient.goalLog || [];
+      patient.goalLog.push(prevGoalEntry);
+    }
+
+    if (shortTermGoals !== undefined) {
+      patient.shortTermGoals = shortTermGoals;
+    }
+
+    if (goalDuration !== undefined) {
+      patient.goalDuration = Number(goalDuration);
+    }
+    console.log(patient, "patient");
+    patient.updatedAt = new Date();
+    await patient.save();
+
     return res.status(200).json({
       success: true,
       message: "Patient goals updated successfully",
-      data: updatedPatient,
+      data: patient,
     });
   } catch (error) {
     console.error("Update Patient Goals Error:", error);

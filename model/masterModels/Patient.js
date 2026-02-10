@@ -241,6 +241,30 @@ const patientSchema = new mongoose.Schema(
       min: 0,
       max: 100,
     },
+    goalLog: [
+      {
+        goal: {
+          type: String,
+          required: false,
+        },
+        feedback: {
+          type: String,
+        },
+        satisfaction: {
+          type: Number,
+        },
+        status: {
+          type: String,
+        },
+        date: {
+          type: String,
+        },
+        goalDuration: {
+          type: Number,
+        },
+      },
+    ],
+
     historyOfFall: {
       type: Boolean,
       default: false,

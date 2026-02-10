@@ -60,6 +60,10 @@ router.post(
   "/Patient/updatePatientGoals",
   PatientControllers.updatePatientGoals,
 );
+router.post(
+  "/Patient/updatePatientFeedbacks",
+  PatientControllers.updatePatientFeedbacks,
+);
 //Assign Physio
 router.post("/Patient/AssignPhysio", PatientControllers.AssignPhysio);
 router.post(
