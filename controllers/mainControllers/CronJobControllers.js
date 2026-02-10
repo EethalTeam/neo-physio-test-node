@@ -195,11 +195,11 @@ exports.initDailySessionGeneration = () => {
 
           const currentSessionCount = completedCount + 1;
 
-          if (
-            patient.totalSessionDays &&
-            currentSessionCount > patient.totalSessionDays
-          )
-            continue;
+          // if (
+          //   patient.totalSessionDays &&
+          //   currentSessionCount > patient.totalSessionDays
+          // )
+          //   continue;s
 
           await Session.create({
             sessionCode: formattedCode,

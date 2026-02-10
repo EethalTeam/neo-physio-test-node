@@ -41,27 +41,36 @@ exports.createSession = async (req, res) => {
     );
     let nextSessionNumber = 1;
 
-    if (lastSession && lastSession.sessionCode) {
-      const lastNumber = parseInt(
-        lastSession.sessionCode.replace("SESSION", ""),
-      );
-      nextSessionNumber = isNaN(lastNumber) ? 1 : lastNumber + 1;
-    }
+    // if (lastSession && lastSession.sessionCode) {
+    //   const lastNumber = parseInt(
+    //     lastSession.sessionCode.replace("SESS", ""),
+    //   );
+    //   nextSessionNumber = isNaN(lastNumber) ? 1 : lastNumber + 1;
+    // }
 
-    const sessionCode = `SESSION${String(nextSessionNumber).padStart(3, "0")}`;
-    const sessionDateTime = new Date(
-      `${sessionDate.toISOString().split("T")[0]}T${sessionTime}:00`,
+    // const sessionCode = `SESS-${String(nextSessionNumber).padStart(3, "0")}`;
+
+    const counter = await Counter.findOneAndUpdate(
+      { _id: "sessionCode" },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true },
     );
+
+    const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
+
+    // const sessionDateTime = new Date(
+    //   `${sessionDate.toISOString().split("T")[0]}T${sessionTime}:00`,
+    // );
     // Create and save the Session
     const session = new Session({
-      sessionCode,
+      sessionCode: formattedCode,
       patientId,
       physioId,
       sessionDate,
       sessionDay,
       sessionTime,
       sessionFromTime,
-      sessionDateTime,
+      // sessionDateTime,
       sessionToTime,
       machineId,
       sessionStatusId,
