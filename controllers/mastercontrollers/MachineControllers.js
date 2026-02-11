@@ -1,135 +1,196 @@
-const mongoose = require('mongoose')
-const Machine = require('../../model/masterModels/Machinery')
+const mongoose = require("mongoose");
+const Machine = require("../../model/masterModels/Machinery");
 
-//Create Machinery 
+//Create Machinery
 
-exports.createMachine = async (req,res) =>{
-     
-    try {
-        const {
-         
-        machineName,
-        machineCategoryID,
-        machineDescription,
-        Manufacturer,
-        machineModel,
-        TotalStockCount,
-        isActive,
-        machineNote
-    } = req.body
+exports.createMachine = async (req, res) => {
+  try {
+    const {
+      machineName,
+      machineCategoryID,
+      machineDescription,
+      Manufacturer,
+      machineModel,
+      TotalStockCount,
+      AvailableToAssign,
+      isActive,
+      machineNote,
+      modalityId,
+    } = req.body;
 
-     const existingMachine = await Machine.findOne({
-        $or :[
-         
-            {machineName}, 
-            
-        ]
-     })
-      if (existingMachine) {
-            return res.status(400).json({ message: 'Machine with this name already exists' });
-        }
+    const existingMachine = await Machine.findOne({
+      $or: [{ machineName }],
+    });
+    if (existingMachine) {
+      return res
+        .status(400)
+        .json({ message: "Machine with this name already exists" });
+    }
 
-     const lastMachine = await Machine.findOne({}, {}, { sort: { 'createdAt': -1 } });
+    const lastMachine = await Machine.findOne(
+      {},
+      {},
+      { sort: { createdAt: -1 } },
+    );
     let nextMachineNumber = 1;
-    
+
     if (lastMachine && lastMachine.machineCode) {
-      const lastNumber = parseInt(lastMachine.machineCode.replace('MACHINE', ''));
+      const lastNumber = parseInt(
+        lastMachine.machineCode.replace("MACHINE", ""),
+      );
       nextMachineNumber = isNaN(lastNumber) ? 1 : lastNumber + 1;
     }
-    
-    const machineCode = `MACHINE${String(nextMachineNumber).padStart(3, '0')}`;
 
-         const Machines = new Machine({
-         machineCode,  machineName, machineCategoryID,machineDescription,Manufacturer, machineModel,TotalStockCount,isActive, machineNote
-         })
-         await Machines.save()
-          res.status(200).json({message:"Machinery create successfully", data:Machines._id})
+    const machineCode = `MACHINE${String(nextMachineNumber).padStart(3, "0")}`;
 
-    } catch (error) {
-            res.status(500).json({ message: error.message });
+    const Machines = new Machine({
+      machineCode,
+      machineName,
+      machineCategoryID,
+      machineDescription,
+      Manufacturer,
+      machineModel,
+      TotalStockCount,
+      AvailableToAssign,
+      isActive,
+      machineNote,
+      modalityId,
+    });
+    await Machines.save();
+    res
+      .status(200)
+      .json({ message: "Machinery create successfully", data: Machines._id });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+//get all Machine
+
+exports.getAllMachine = async (req, res) => {
+  try {
+    const Machines = await Machine.find().populate(
+      "modalityId",
+      "modalitiesName modalitiestype",
+    );
+
+    res.status(200).json(Machines);
+    if (!Machines) {
+      return res.status(400).json({ message: "Machine is not find" });
     }
-
-}
-
-
-//get all Machine 
-
-exports.getAllMachine = async (req,res)=>{
-       try {
-           const Machines = await Machine.find()
-           res.status(200).json(Machines)
-           if(!Machines){
-            return res.status(400).json({message:'Machine is not find'})
-           }
-       } catch (error) {
-        res.status(500).json({ message: error.message });
-       }
-}
-
-
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 
 // Get a single Machine  by Name
 exports.getMachineByName = async (req, res) => {
-    try {
-        
-        const Machines = await Machine.findOne({ machineName: req.body.machineName })
-    
-        if (!Machines) {
-            return res.status(400).json({ message: 'Machine not found' });
-        }
+  try {
+    const Machines = await Machine.findOne({
+      machineName: req.body.machineName,
+    });
 
-        res.status(200).json(Machines);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+    if (!Machines) {
+      return res.status(400).json({ message: "Machine not found" });
     }
+
+    res.status(200).json(Machines);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
-
 //update Machine
+exports.updateMachine = async (req, res) => {
+  try {
+    const {
+      _id,
+      machineCode,
+      machineName,
+      machineCategoryID,
+      machineDescription,
+      Manufacturer,
+      machineModel,
+      TotalStockCount,
+      AvailableToAssign,
+      isActive,
+      machineNote,
+      Assignedto,
+    } = req.body;
 
-exports.updateMaachine = async (req,res) => {
-    try {
-        const {
-        _id,  machineCode,  machineName, machineCategoryID,machineDescription,Manufacturer, machineModel,TotalStockCount,isActive, machineNote
-        } = req.body
+    const Machines = await Machine.findByIdAndUpdate(
+      _id,
+      {
+        $set: {
+          machineCode,
+          machineName,
+          machineCategoryID,
+          machineDescription,
+          Manufacturer,
+          machineModel,
+          TotalStockCount,
+          isActive,
+          machineNote,
+          Assignedto,
+        },
+      },
+      { new: true, runValidators: true },
+    );
 
-        const Machines = await Machine.findByIdAndUpdate(
-        _id,
-        {$set:{machineCode,  machineName, machineCategoryID,machineDescription,Manufacturer, machineModel,TotalStockCount,isActive, machineNote}},
-        {new:true, runValidators:true}
-    )
-    
-        if (!Machines) {
-            return res.status(400).json({ message: 'Machine not found' });
-        }
-
-        res.status(200).json({message:"Machine update successfully",data:Machines})
-
-
-    } catch (error) {
-           res.status(500).json({ message: error.message });
+    if (!Machines) {
+      return res.status(400).json({ message: "Machine not found" });
     }
-}
 
+    res.status(200).json({
+      message: "Machine updated successfully",
+      data: Machines,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+exports.assignMachine = async (req, res) => {
+  try {
+    const { _id, Assignedto, AvailableToAssign } = req.body;
 
+    const machine = await Machine.findByIdAndUpdate(
+      _id,
+      {
+        $set: {
+          Assignedto,
+          AvailableToAssign,
+        },
+      },
+      { new: true },
+    );
+
+    if (!machine) {
+      return res.status(404).json({ message: "Machine not found" });
+    }
+
+    res.status(200).json(machine);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 
 // Delete a Machine
 exports.deleteMachine = async (req, res) => {
-    try {
-        const { _id } = req.body;
-        
-        if (!mongoose.Types.ObjectId.isValid(_id)) {
-            return res.status(400).json({ message: 'Invalid ID' });
-        }
-        
-        const Machines = await Machine.findByIdAndDelete(_id);
+  try {
+    const { _id } = req.body;
 
-        if (!Machines) {
-            return res.status(400).json({ message: 'Machine not found' });
-        }
-
-        res.status(200).json({ message: 'Machine deleted successfully' });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+    if (!mongoose.Types.ObjectId.isValid(_id)) {
+      return res.status(400).json({ message: "Invalid ID" });
     }
+
+    const Machines = await Machine.findByIdAndDelete(_id);
+
+    if (!Machines) {
+      return res.status(400).json({ message: "Machine not found" });
+    }
+
+    res.status(200).json({ message: "Machine deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };

@@ -72,16 +72,16 @@ exports.createConsultation = async (req, res) => {
       ReferenceId,
     } = req.body;
     // Check for duplicates (if needed)
-    const existingConsulate = await Consultation.findOne({
+    const existingConsultate = await Consultation.findOne({
       patientCode: patientCode,
     });
-    if (existingConsulate) {
+    if (existingConsultate) {
       return res
         .status(400)
         .json({ message: "Consulation with this code  already exists" });
     }
     // Create and save the Patient
-    const consulate = new Consultation({
+    const consultate = new Consultation({
       patientName,
       patientCode,
       isActive,
@@ -141,11 +141,11 @@ exports.createConsultation = async (req, res) => {
       feeAmount,
       ReferenceId,
     });
-    await consulate.save();
+    await consultate.save();
 
     res.status(200).json({
       message: "Patient created successfully",
-      data: consulate._id,
+      data: consultate._id,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -154,36 +154,36 @@ exports.createConsultation = async (req, res) => {
 // Get allConsultation
 exports.getAllConsultation = async (req, res) => {
   try {
-    const consulate = await Consultation.find()
+    const consultate = await Consultation.find()
       .populate("patientGenderId", "genderName")
       .populate("MedicalHistoryAndRiskFactor.RiskFactorID", "RiskFactorName")
       .populate("physioId", "physioName");
-    if (!consulate) {
-      return res.status(400).json({ message: "consulate is not found" });
+    if (!consultate) {
+      return res.status(400).json({ message: "consultate is not found" });
     }
 
-    res.status(200).json(consulate);
+    res.status(200).json(consultate);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
-// Get a single consulate by name
+// Get a single consultate by name
 exports.getByConsultationName = async (req, res) => {
   try {
-    const consulate = await Consultation.findOne({
+    const consultate = await Consultation.findOne({
       patientName: req.body.name,
     });
 
-    if (!consulate) {
-      return res.status(400).json({ message: "consulate not found" });
+    if (!consultate) {
+      return res.status(400).json({ message: "consultate not found" });
     }
 
-    res.status(200).json(consulate);
+    res.status(200).json(consultate);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
-// Update a consulate
+// Update a consultate
 exports.updateConsultation = async (req, res) => {
   try {
     const {
@@ -248,7 +248,7 @@ exports.updateConsultation = async (req, res) => {
       ReferenceId,
     } = req.body;
 
-    const consulate = await Consultation.findByIdAndUpdate(
+    const consultate = await Consultation.findByIdAndUpdate(
       _id,
       {
         $set: {
@@ -315,19 +315,21 @@ exports.updateConsultation = async (req, res) => {
       { new: true, runValidators: true },
     );
 
-    if (!consulate) {
-      return res.status(400).json({ message: "consulate Cant able to update" });
+    if (!consultate) {
+      return res
+        .status(400)
+        .json({ message: "consultate Cant able to update" });
     }
 
     res
       .status(200)
-      .json({ message: "consulate updated successfully", data: consulate });
+      .json({ message: "consultate updated successfully", data: consultate });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// Delete a consulate
+// Delete a consultate
 exports.deleteConsultation = async (req, res) => {
   try {
     const { _id } = req.body;
@@ -336,13 +338,13 @@ exports.deleteConsultation = async (req, res) => {
       return res.status(400).json({ message: "Invalid ID" });
     }
 
-    const consulate = await Consultation.findByIdAndDelete(_id);
+    const consultate = await Consultation.findByIdAndDelete(_id);
 
-    if (!consulate) {
-      return res.status(400).json({ message: "consulate not found" });
+    if (!consultate) {
+      return res.status(400).json({ message: "consultate not found" });
     }
 
-    res.status(200).json({ message: "Consulate deleted successfully" });
+    res.status(200).json({ message: "Consultate deleted successfully" });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
