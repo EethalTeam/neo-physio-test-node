@@ -23,7 +23,10 @@ exports.getAllDashBoard = async (req, res) => {
     }
 
     let lead = await Leads.find(dateQuery);
-    let patient = await Patients.find(dateQuery);
+    let patient = await Patients.find({
+      ...dateQuery,
+      isRecovered: { $ne: true },
+    });
     let pendingreviews = await Review.find()
       .populate("reviewStatusId") // populates the status object
       .then((reviews) =>
@@ -69,8 +72,17 @@ exports.getAllDashBoard = async (req, res) => {
     }
 
     let patientRecover = await PatientModel.find({
+      isRecovered: true,
+    });
+    let patientRecovered = await PatientModel.find({
+      isRecovered: true,
       recoveredType: "Patient Recovered",
     });
+    let patientRecoveredOthers = await PatientModel.find({
+      isRecovered: true,
+      recoveredType: "Other",
+    });
+
     let physio = await Physio.find({
       roleId: new mongoose.Types.ObjectId("6926ca2ccddb76460d277717"),
       isActive: true,
@@ -126,6 +138,8 @@ exports.getAllDashBoard = async (req, res) => {
       monthlySessions: monthlySessions.length,
       // cancelledsession: cancelledsession.length,
       pendingreviews: pendingreviews.length,
+      patientRecovered: patientRecovered.length,
+      patientRecoveredOthers: patientRecoveredOthers.length,
       completedReview: completedReview.length,
       patientRecover: patientRecover.length,
       // sessionCompleted: sessionCompleted.length,
