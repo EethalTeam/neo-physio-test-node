@@ -309,7 +309,7 @@ exports.initScheduledReviewGeneration = () => {
 
 exports.initReturnJourneyAllowanceCron = () => {
   cron.schedule(
-    "30 21 * * *",
+    "30 19 * * *",
     async () => {
       try {
         console.log(
@@ -319,16 +319,13 @@ exports.initReturnJourneyAllowanceCron = () => {
         const completedStatus = await SessionStatus.findOne({
           sessionStatusName: "Completed",
         });
-        if (!completedStatus) {
-          console.error("❌ 'Completed' status not found in database.");
-          return;
-        }
+        if (!completedStatus)
+          return console.error("❌ 'Completed' status not found");
 
         const start = new Date();
         start.setHours(0, 0, 0, 0);
         const end = new Date();
         end.setHours(23, 59, 59, 999);
-
         const allowanceDate = new Date();
         allowanceDate.setHours(12, 0, 0, 0);
 
@@ -339,42 +336,42 @@ exports.initReturnJourneyAllowanceCron = () => {
           .populate("patientId")
           .sort({ sessionToTime: 1 });
 
-        if (completedSessions.length === 0) {
-          console.log("ℹ️ No completed sessions found for today.");
-          return;
-        }
+        if (!completedSessions.length)
+          return console.log("ℹ️ No completed sessions today");
 
-        const latestSessionByPhysio = {};
+        // Group by physio
+        const physioReturnKms = {};
 
         completedSessions.forEach((session) => {
-          latestSessionByPhysio[session.physioId.toString()] = session;
+          const physioId = session.physioId.toString();
+          const patientData = session.patientId;
+
+          if (!patientData || patientData.KmsfLPatienttoHub <= 0) return;
+
+          // Initialize
+          if (!physioReturnKms[physioId]) physioReturnKms[physioId] = 0;
+
+          // Add return kms only for completed sessions
+          physioReturnKms[physioId] += patientData.KmsfLPatienttoHub;
         });
 
-        const updatePromises = Object.values(latestSessionByPhysio).map(
-          async (lastSession) => {
-            const patientData = lastSession.patientId;
-
-            if (patientData && patientData.KmsfLPatienttoHub > 0) {
-              const returnKms = patientData.KmsfLPatienttoHub;
-
-              await PetrolAllowance.findOneAndUpdate(
-                {
-                  physioId: lastSession.physioId,
-                  date: allowanceDate,
+        // Update PetrolAllowance collection
+        const updatePromises = Object.entries(physioReturnKms).map(
+          async ([physioId, totalReturnKms]) => {
+            await PetrolAllowance.findOneAndUpdate(
+              { physioId, date: allowanceDate },
+              {
+                $inc: {
+                  completedKms: totalReturnKms,
+                  finalDailyKms: totalReturnKms,
                 },
-                {
-                  $inc: {
-                    completedKms: returnKms,
-                    finalDailyKms: returnKms,
-                  },
-                },
-                { new: true, upsert: true },
-              );
+              },
+              { new: true, upsert: true },
+            );
 
-              console.log(
-                `✅ Added ${returnKms}km return journey for Physio ID: ${lastSession.physioId} (Patient: ${patientData.patientName})`,
-              );
-            }
+            console.log(
+              `✅ Added ${totalReturnKms} km return journey for Physio ID: ${physioId}`,
+            );
           },
         );
 
