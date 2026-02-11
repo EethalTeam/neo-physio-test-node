@@ -602,7 +602,7 @@ exports.SessionCancel = async (req, res) => {
 
     const patientData = await Patient.findById(cancelledSession.patientId);
     if (patientData) {
-      let kmsToAdd = patientData.KmsfLPatienttoHub || 0;
+      // let kmsToAdd = patientData.KmsfLPatienttoHub || 0;
       const allowanceDate = new Date(cancelledSession.sessionDate);
       allowanceDate.setHours(12, 0, 0, 0);
 
@@ -610,9 +610,9 @@ exports.SessionCancel = async (req, res) => {
         { physioId: cancelledSession.physioId, date: allowanceDate },
         {
           $inc: {
-            completedKms: kmsToAdd,
+            // completedKms: kmsToAdd,
             canceledKms: cancelledKms || 0,
-            finalDailyKms: kmsToAdd,
+            // finalDailyKms: kmsToAdd,
           },
         },
         { new: true, upsert: true },
