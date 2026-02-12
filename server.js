@@ -1,14 +1,14 @@
 const mongoose = require("mongoose");
 const express = require("express");
 const cors = require("cors");
-const path = require('path');
+const path = require("path");
 const bodyParser = require("body-parser");
 const http = require("http");
 const { Server } = require("socket.io");
 const cron = require("node-cron");
 const masterRoutes = require("./router/masterRoutes");
 const mainRoutes = require("./router/mainRoutes");
-const CronJobControllers = require("./controllers/mainControllers/CronJobControllers")
+const CronJobControllers = require("./controllers/mainControllers/CronJobControllers");
 // const authRoutes = require('./routes/authRoutes');
 
 // --- UNCOMMENTED FOR NOTIFICATIONS ---
@@ -24,13 +24,16 @@ const PORT = 8001;
 
 // app.use(bodyParser.json());
 app.use(
-  express.json({
-    verify: (req, res, buf) => {
-      req.rawBody = buf; // Save the raw buffer to the request object
+  express.json(
+    {
+      verify: (req, res, buf) => {
+        req.rawBody = buf; // Save the raw buffer to the request object
+      },
     },
-  },{ limit: '10mb' }),
+    { limit: "10mb" },
+  ),
 );
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.use(
   cors({
     origin: "*",
@@ -51,7 +54,7 @@ app.get("/privacy", (req, res) => {
     <p>If you wish to opt-out or request data deletion, please contact eethalnaditsolutions@gmail.com.</p>
   `);
 });
-app.use('/physioPic', express.static(path.join(__dirname, 'physioPic')));
+app.use("/physioPic", express.static(path.join(__dirname, "physioPic")));
 app.use("/api", masterRoutes);
 app.use("/api", mainRoutes);
 
@@ -186,7 +189,7 @@ const createNotification = async ({
 async function main() {
   try {
     await mongoose.connect(
-      "mongodb+srv://restore_admin:enisrestore123@enistechteam.owwtldg.mongodb.net/neo-physio?retryWrites=true&w=majority&appName=NEO-PHYSIO",
+      "mongodb+srv://restore_admin:enisdevteam123@enistechteam.owwtldg.mongodb.net/neo-physio?retryWrites=true&w=majority&appName=NEO-PHYSIO",
       {
         serverSelectionTimeoutMS: 30000,
         socketTimeoutMS: 45000,

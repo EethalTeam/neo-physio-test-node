@@ -519,6 +519,7 @@ exports.SessionCancel = async (req, res) => {
       cancelledKms,
       userRole,
       physioName,
+      petrolAllowanceClaimed,
       cancelledReason,
     } = req.body;
     console.log(cancelledReason, "cancelledReason");
@@ -534,6 +535,7 @@ exports.SessionCancel = async (req, res) => {
           sessionStatusId: Status._id,
           sessionCancelReason: cancelledReason,
           sessionFeedbackCons: cancelledReason,
+          petrolAllowanceClaimed: petrolAllowanceClaimed,
         },
       },
       { new: true, runValidators: true },
@@ -573,7 +575,7 @@ exports.SessionCancel = async (req, res) => {
               patient?.patientName || "Patient"
             } has been cancelled and the Reason is ${
               cancelledSession.sessionCancelReason
-            } for the date of ${cancelledSession.sessionDate.toLocaleDateString()} - ${userRole} (${physioName}).`,
+            } for the date of ${cancelledSession.sessionDate.toLocaleDateString()} - ${userRole} (${physioName}) - ${petrolAllowanceClaimed ? "Petrol Allowance Claimed" : "Petrol Allowance Not Claimed"}.`,
             type: "general",
             status: "unseen",
             meta: {
@@ -605,14 +607,56 @@ exports.SessionCancel = async (req, res) => {
       // let kmsToAdd = patientData.KmsfLPatienttoHub || 0;
       const allowanceDate = new Date(cancelledSession.sessionDate);
       allowanceDate.setHours(12, 0, 0, 0);
+      let travelKm = 0;
+      if (petrolAllowanceClaimed) {
+        const dayStart = new Date(cancelledSession.sessionDate);
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(cancelledSession.sessionDate);
+        dayEnd.setHours(23, 59, 59, 999);
+        const completedSessionStatus = await SessionStatus.find({
+          sessionStatusName: { $in: ["Completed", "Attended"] },
+        }).select("_id");
+        const StatusIds = completedSessionStatus.map((s) => s._id);
+        const firstCompleteSession = await Session.findOne({
+          physioId: cancelledSession.physioId,
+          sessionDate: { $gte: dayStart, $lte: dayEnd },
+          sessionStatusId: { $in: StatusIds },
+        })
+          .sort({ sessionToTime: 1 })
+          .populate("patientId");
+        if (firstCompleteSession?.patientId) {
+          travelKm = Number(firstCompleteSession.patientId.KmsfromHub || 0);
+        } else {
+          const patientData = await Patient.findById(
+            cancelledSession.patientId,
+          );
+          if (patientData) {
+            travelKm =
+              patientData.visitOrder == 1
+                ? Number(patientData.KmsfromHub || 0)
+                : Number(patientData.kmsFromPrevious || 0);
+          }
+        }
+
+        // if (patientData.visitOrder === 1) {
+        //   kmsToAdd = patientData.KmsfromHub || 0;
+        // } else {
+        //   kmsToAdd = patientData.kmsFromPrevious || 0;
+        // }
+      }
 
       await PetrolAllowance.findOneAndUpdate(
-        { physioId: cancelledSession.physioId, date: allowanceDate },
         {
+          physioId: cancelledSession.physioId,
+          date: allowanceDate,
+        },
+        {
+          $set: { petrolAllowanceClaimed: petrolAllowanceClaimed },
+
           $inc: {
-            // completedKms: kmsToAdd,
-            canceledKms: cancelledKms || 0,
-            // finalDailyKms: kmsToAdd,
+            completedKms: travelKm,
+            // canceledKms: cancelledKms || 0,
+            finalDailyKms: travelKm,
           },
         },
         { new: true, upsert: true },
@@ -759,6 +803,7 @@ exports.SessionEnd = async (req, res) => {
     if (patient) {
       // ... (Your existing petrol logic remains untouched) ...
       let kmsToAdd = 0;
+
       if (patient.visitOrder === 1) {
         kmsToAdd = patient.KmsfromHub || 0;
       } else {

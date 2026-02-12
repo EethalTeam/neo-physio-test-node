@@ -19,12 +19,12 @@ exports.createMachine = async (req, res) => {
     } = req.body;
 
     const existingMachine = await Machine.findOne({
-      $or: [{ machineName }],
+      $or: [{ modalityId }],
     });
     if (existingMachine) {
       return res
         .status(400)
-        .json({ message: "Machine with this name already exists" });
+        .json({ message: "Machine with this Id already exists" });
     }
 
     const lastMachine = await Machine.findOne(
