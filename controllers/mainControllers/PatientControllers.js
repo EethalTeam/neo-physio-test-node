@@ -298,6 +298,67 @@ exports.getAllPatients = async (req, res) => {
   }
 };
 
+// exports.getAllPatientsIncome = async (req, res) => {
+//   try {
+//     const { month, year } = req.body;
+//     if (!month || !year) {
+//       return res.status(400).json({ message: "Month and Year are required." });
+//     }
+
+//     const patients = await Patient.find()
+//       .populate("FeesTypeId", "feesTypeName") // Correct field
+//       .populate("patientGenderId", "genderName")
+//       .populate("MedicalHistoryAndRiskFactor.RiskFactorID", "RiskFactorName")
+//       .populate("physioId", "physioName");
+
+//     const result = await Promise.all(
+//       patients.map(async (p) => {
+//         // Fetch sessions for the selected month
+//         const sessions = await Session.find({
+//           patientId: p._id,
+//           sessionDate: {
+//             $gte: new Date(year, month - 1, 1),
+//             $lt: new Date(year, month, 1),
+//           },
+//         });
+
+//         // Filter completed sessions
+//         const completedSessions = sessions.filter(
+//           (s) =>
+//             s.sessionStatusId?.sessionStatusName &&
+//             s.sessionStatusId.sessionStatusName.toLowerCase() === "completed",
+//         );
+
+//         const totalCompleted = completedSessions.length;
+
+//         // Calculate total income
+//         let totalIncome = 0;
+//         const feeTypeName = p.FeesTypeId?.feesTypeName;
+
+//         if (feeTypeName === "PerSession") {
+//           totalIncome = (p.feeAmount || 0) * totalCompleted;
+//         } else if (feeTypeName === "Monthly") {
+//           totalIncome = p.feeAmount || 0;
+//         }
+
+//         return {
+//           _id: p._id,
+//           patientName: p.patientName,
+//           feeType: feeTypeName || "N/A",
+//           feePerSession: p.feeAmount || 0,
+//           totalCompletedSessions: totalCompleted,
+//           totalIncome,
+//         };
+//       }),
+//     );
+
+//     res.status(200).json(result);
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+
 exports.getAllPatientsIncome = async (req, res) => {
   try {
     const { month, year } = req.body;
@@ -306,52 +367,48 @@ exports.getAllPatientsIncome = async (req, res) => {
     }
 
     const patients = await Patient.find()
-      .populate("FeesTypeId", "feesTypeName") // Correct field
+      .populate("FeesTypeId", "feesTypeName")
       .populate("patientGenderId", "genderName")
       .populate("MedicalHistoryAndRiskFactor.RiskFactorID", "RiskFactorName")
       .populate("physioId", "physioName");
 
     const result = await Promise.all(
       patients.map(async (p) => {
-        // Fetch sessions for the selected month
         const sessions = await Session.find({
           patientId: p._id,
           sessionDate: {
             $gte: new Date(year, month - 1, 1),
             $lt: new Date(year, month, 1),
           },
-        });
+        }).populate("sessionStatusId", "sessionStatusName");
 
-        // Filter completed sessions
         const completedSessions = sessions.filter(
           (s) =>
             s.sessionStatusId?.sessionStatusName &&
-            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed",
+            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed"
         );
-
         const totalCompleted = completedSessions.length;
-
-        // Calculate total income
         let totalIncome = 0;
         const feeTypeName = p.FeesTypeId?.feesTypeName;
+        const baseFee = p.feeAmount || 0;
 
         if (feeTypeName === "PerSession") {
-          totalIncome = (p.feeAmount || 0) * totalCompleted;
-        } else if (feeTypeName === "Monthly") {
-          totalIncome = p.feeAmount || 0;
+          totalIncome = baseFee * totalCompleted;
+        } else if (feeTypeName === "PerMonth") {
+          const ratePerSession = baseFee / 26;
+          totalIncome = ratePerSession * totalCompleted;
         }
 
         return {
           _id: p._id,
           patientName: p.patientName,
           feeType: feeTypeName || "N/A",
-          feePerSession: p.feeAmount || 0,
+          feePerSession: feeTypeName === "PerMonth" ? (baseFee / 26).toFixed(2) : baseFee,
           totalCompletedSessions: totalCompleted,
-          totalIncome,
+          totalIncome: Number(totalIncome.toFixed(2)), 
         };
-      }),
+      })
     );
-
     res.status(200).json(result);
   } catch (error) {
     console.error(error);
