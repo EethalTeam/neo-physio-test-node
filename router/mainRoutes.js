@@ -70,6 +70,10 @@ router.post(
   "/Patient/getPhysioPatientCounts",
   PatientControllers.getPhysioPatientCounts,
 );
+router.post(
+  "/Patient/getAllPatientsByPhysioAndDate",
+  PatientControllers.getAllPatientsByPhysioAndDate,
+);
 
 //ExpenseControllers
 router.post("/Expense/createExpense", ExpenseControllers.createExpense);
@@ -109,7 +113,7 @@ router.post(
   "/PetrolAllowance/getAllPetrolAllowance",
   PetrolAllowanceControllers.getAllPetrol,
 );
-
+router.post("/Physio/saveLeavePlan", physioControllers.saveLeavePlan);
 //DashBoardControllers
 router.post("/DashBoard/getAllDashBoard", DashBoardControllers.getAllDashBoard);
 router.post("/DashBoard/monthlyfunnel", DashBoardControllers.monthlyfunnel);

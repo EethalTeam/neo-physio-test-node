@@ -4,16 +4,34 @@ const mongoose = require("mongoose");
 const LeaveSchema = new mongoose.Schema(
   {
     physioId: {
-      type: String,
-      trim: true,
+      type: mongoose.Schema.Types.ObjectId,
       ref: "Physio",
+      required: true,
     },
+
     LeaveDate: {
       type: Date,
     },
     LeaveMode: {
       type: String,
     },
+    SessionGenerateForLeave: [
+      {
+        patientId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Patient",
+          // required: true,
+        },
+        sessionTime: {
+          type: String,
+        },
+        Re_Assign: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Physio",
+          default: null,
+        },
+      },
+    ],
     isActive: {
       type: Boolean,
       default: true,

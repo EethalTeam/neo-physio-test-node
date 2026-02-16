@@ -298,6 +298,29 @@ exports.getAllPatients = async (req, res) => {
   }
 };
 
+exports.getAllPatientsByPhysioAndDate = async (req, res) => {
+  try {
+    const { physioId, targetDate } = req.body; // targetDate isn't strictly needed for this version
+
+    // Directly find patients whose main doctor is the one selected
+    const patients = await Patient.find({
+      physioId: new mongoose.Types.ObjectId(physioId),
+    })
+      .populate("FeesTypeId", "feesTypeName")
+      .populate("physioId", "physioName")
+      .lean();
+
+    const response = patients.map((p) => ({
+      ...p,
+      FeesTypeName: p.FeesTypeId?.feesTypeName || "N/A",
+      sessionTime: p.sessionTime || "Not Scheduled",
+    }));
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 // exports.getAllPatientsIncome = async (req, res) => {
 //   try {
 //     const { month, year } = req.body;
@@ -385,7 +408,7 @@ exports.getAllPatientsIncome = async (req, res) => {
         const completedSessions = sessions.filter(
           (s) =>
             s.sessionStatusId?.sessionStatusName &&
-            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed"
+            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed",
         );
         const totalCompleted = completedSessions.length;
         let totalIncome = 0;
@@ -403,11 +426,12 @@ exports.getAllPatientsIncome = async (req, res) => {
           _id: p._id,
           patientName: p.patientName,
           feeType: feeTypeName || "N/A",
-          feePerSession: feeTypeName === "PerMonth" ? (baseFee / 26).toFixed(2) : baseFee,
+          feePerSession:
+            feeTypeName === "PerMonth" ? (baseFee / 26).toFixed(2) : baseFee,
           totalCompletedSessions: totalCompleted,
-          totalIncome: Number(totalIncome.toFixed(2)), 
+          totalIncome: Number(totalIncome.toFixed(2)),
         };
-      })
+      }),
     );
     res.status(200).json(result);
   } catch (error) {
