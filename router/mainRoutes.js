@@ -117,6 +117,8 @@ router.post("/Physio/saveLeavePlan", physioControllers.saveLeavePlan);
 //DashBoardControllers
 router.post("/DashBoard/getAllDashBoard", DashBoardControllers.getAllDashBoard);
 router.post("/DashBoard/monthlyfunnel", DashBoardControllers.monthlyfunnel);
+router.post("/DashBoard/getIncomeByDate", DashBoardControllers.getIncomeByDate);
+router.post("/Dashboard/getTodayIncome", DashBoardControllers.getTodayIncome);
 //ConsultationControllers
 router.post(
   "/Consultation/createConsultation",

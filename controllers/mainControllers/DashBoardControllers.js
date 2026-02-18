@@ -7,6 +7,113 @@ const Consultation = require("../../model/masterModels/Consultation");
 const Review = require("../../model/masterModels/Review");
 const PatientModel = require("../../model/masterModels/Patient");
 const SessionStatus = require("../../model/masterModels/SessionStatus");
+
+exports.getIncomeByDate = async (req, res) => {
+  try {
+    let { fromDate, toDate } = req.body;
+
+    // if only fromDate, treat it as one day
+    if (fromDate && !toDate) toDate = fromDate;
+
+    // Date range: default = current month
+    const startDate = fromDate
+      ? new Date(`${fromDate}T00:00:00.000Z`)
+      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+    const endDate = fromDate
+      ? new Date(`${toDate}T23:59:59.999Z`)
+      : new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1);
+
+    // Load patients + fee type
+    const patients = await Patients.find().populate(
+      "FeesTypeId",
+      "feesTypeName",
+    );
+
+    // Build result per patient
+    const result = await Promise.all(
+      patients.map(async (p) => {
+        // Count only COMPLETED sessions in date range
+        const sessions = await Session.find({
+          patientId: p._id,
+          sessionDate: { $gte: startDate, $lte: endDate },
+        }).populate("sessionStatusId", "sessionStatusName");
+
+        const completedCount = sessions.filter(
+          (s) =>
+            s.sessionStatusId?.sessionStatusName?.toLowerCase() === "completed",
+        ).length;
+
+        const feeTypeName = p.FeesTypeId?.feesTypeName || "N/A";
+        const baseFee = Number(p.feeAmount || 0);
+
+        // Fee per session logic
+        let feePerSession = 0;
+        if (feeTypeName === "PerSession") feePerSession = baseFee;
+        else if (feeTypeName === "PerMonth") feePerSession = baseFee / 26;
+
+        const totalIncome = Math.round(Number(completedCount * feePerSession));
+
+        return {
+          _id: p._id,
+          patientName: p.patientName,
+          feeType: feeTypeName,
+          feePerSession: Math.round(Number(feePerSession)),
+          totalCompletedSessions: Math.round(completedCount),
+          totalIncome,
+        };
+      }),
+    );
+
+    // totals (IMPORTANT: reduce from result)
+    const totalCompletedAmount = Number(
+      result.reduce(
+        (sum, p) => Math.round(sum + Number(p.totalIncome || 0)),
+        0,
+      ),
+    );
+
+    const totalCompletedSessions = result.reduce(
+      (sum, p) => Math.round(sum + Number(p.totalCompletedSessions || 0)),
+      0,
+    );
+
+    const avgPricePerSession =
+      totalCompletedSessions > 0
+        ? Math.round(Number(totalCompletedAmount / totalCompletedSessions))
+        : 0;
+
+    return res.status(200).json({
+      totalCompletedAmount,
+      totalCompletedSessions,
+      avgPricePerSession,
+      patients: result,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+exports.getTodayIncome = async (req, res) => {
+  try {
+    const today = new Date();
+    const startDate = new Date(today);
+    startDate.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(today);
+    endDate.setHours(23, 59, 59, 999);
+
+    // Reuse getIncomeByDate logic by calling same code style:
+    req.body = {
+      fromDate: startDate.toISOString().slice(0, 10),
+      toDate: endDate.toISOString().slice(0, 10),
+    };
+
+    return exports.getIncomeByDate(req, res);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 exports.getAllDashBoard = async (req, res) => {
   try {
     let { fromDate, toDate } = req.body;
@@ -27,30 +134,31 @@ exports.getAllDashBoard = async (req, res) => {
       ...dateQuery,
       isRecovered: { $ne: true },
     });
+
     let pendingreviews = await Review.find()
-      .populate("reviewStatusId") // populates the status object
+      .populate("reviewStatusId")
       .then((reviews) =>
         reviews.filter(
           (r) =>
             r.reviewStatusId?.reviewStatusName?.toLowerCase() === "pending",
         ),
       );
-    // console.log(pendingreviews, "pendingreviews");
+
     let completedReview = await Review.find()
-      .populate("reviewStatusId") // populates the status object
+      .populate("reviewStatusId")
       .then((reviews) =>
         reviews.filter(
           (r) =>
             r.reviewStatusId?.reviewStatusName?.toLowerCase() === "completed",
         ),
       );
+
     let completedStatus = await SessionStatus.findOne({
       sessionStatusName: "Completed",
     });
 
-    // Get the total number of completed sessions
     let completedSessionsCount = await Session.find({
-      sessionStatusId: completedStatus._id,
+      sessionStatusId: completedStatus?._id,
       ...(fromDate && {
         sessionDate: {
           $gte: new Date(fromDate + "T00:00:00.000Z"),
@@ -71,9 +179,7 @@ exports.getAllDashBoard = async (req, res) => {
       endDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
     }
 
-    let patientRecover = await PatientModel.find({
-      isRecovered: true,
-    });
+    let patientRecover = await PatientModel.find({ isRecovered: true });
     let patientRecovered = await PatientModel.find({
       isRecovered: true,
       recoveredType: "Patient Recovered",
@@ -92,35 +198,6 @@ exports.getAllDashBoard = async (req, res) => {
       sessionDate: { $gte: startDate, $lt: endDate },
     });
 
-    console.log("Monthly sessions:", monthlySessions.length);
-
-    // let sessionCompleted = await Session.find({
-    //   sessionToTime: { $ne: null },
-    // });
-
-    let sessionCompleted = await Session.find({
-      sessionToTime: { $exists: true, $ne: null },
-      ...(fromDate &&
-        toDate && {
-          sessionDate: {
-            $gte: startDate,
-            $lte: endDate,
-          },
-        }),
-    });
-
-    const start = performance.now();
-    let today = new Date();
-    // let startDay = new Date(
-    //   today.getFullYear(),
-    //   today.getMonth(),
-    //   today.getDate(),
-    // );
-    // let endDay = new Date(
-    //   today.getFullYear(),
-    //   today.getMonth(),
-    //   today.getDate() + 1,
-    // );
     const startDay = new Date();
     startDay.setHours(0, 0, 0, 0);
 
@@ -136,29 +213,21 @@ exports.getAllDashBoard = async (req, res) => {
       patient: patient.length,
       physio: physio.length,
       monthlySessions: monthlySessions.length,
-      // cancelledsession: cancelledsession.length,
       pendingreviews: pendingreviews.length,
       patientRecovered: patientRecovered.length,
       patientRecoveredOthers: patientRecoveredOthers.length,
       completedReview: completedReview.length,
       patientRecover: patientRecover.length,
-      // sessionCompleted: sessionCompleted.length,
       sessionCompleted: completedSessionsCount.length,
       todaysession: todaysession.length,
     };
 
-    if (!filter) {
-      return res
-        .status(400)
-        .json({ message: "Error from backend Dashboard getAllDash" });
-    }
-    res.status(200).json(filter);
-    const end = performance.now();
-    console.log(`Time taken: in dashboard ${(end - start).toFixed(2)} ms`);
+    return res.status(200).json(filter);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
+
 exports.monthlyfunnel = async (req, res) => {
   try {
     const { month, year } = req.body;
@@ -167,24 +236,19 @@ exports.monthlyfunnel = async (req, res) => {
     }
     const startDate = new Date(year, month - 1, 1);
     const enddate = new Date(year, month, 1);
-    const [newEnquiries, newConsultations, newPatients] = await Promise.all([
-      Leads.find({
-        createdAt: { $gte: startDate, $lt: enddate },
-      }),
-      Consultation.find({
-        createdAt: { $gte: startDate, $lt: enddate },
-      }),
 
-      Patients.find({
-        createdAt: { $gte: startDate, $lt: enddate },
-      }),
+    const [newEnquiries, newConsultations, newPatients] = await Promise.all([
+      Leads.find({ createdAt: { $gte: startDate, $lt: enddate } }),
+      Consultation.find({ createdAt: { $gte: startDate, $lt: enddate } }),
+      Patients.find({ createdAt: { $gte: startDate, $lt: enddate } }),
     ]);
 
     const conversionRate =
       newEnquiries.length > 0
-        ? ((newPatients.length / newEnquiries.length) * 100).toFixed(2)
+        ? Math.round((newPatients.length / newEnquiries.length) * 100)
         : 0;
-    res.status(200).json({
+
+    return res.status(200).json({
       month,
       year,
       newEnquiries,
@@ -194,5 +258,6 @@ exports.monthlyfunnel = async (req, res) => {
     });
   } catch (err) {
     console.log(err);
+    return res.status(500).json({ message: err.message });
   }
 };

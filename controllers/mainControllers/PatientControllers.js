@@ -321,6 +321,73 @@ exports.getAllPatientsByPhysioAndDate = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+exports.getIncomeByDate = async (req, res) => {
+  try {
+    let { fromDate, toDate } = req.body;
+
+    if (fromDate && !toDate) toDate = fromDate;
+
+    const startDate = fromDate
+      ? new Date(fromDate + "T00:00:00.000Z")
+      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+    const endDate = fromDate
+      ? new Date(toDate + "T23:59:59.999Z")
+      : new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1);
+
+    // Use your existing income logic API if you already have it
+    const patients = await Patient.find().populate(
+      "FeesTypeId",
+      "feesTypeName",
+    );
+
+    const result = await Promise.all(
+      patients.map(async (p) => {
+        const sessions = await Session.find({
+          patientId: p._id,
+          sessionDate: { $gte: startDate, $lte: endDate },
+        }).populate("sessionStatusId", "sessionStatusName");
+
+        const completed = sessions.filter(
+          (s) =>
+            s.sessionStatusId?.sessionStatusName?.toLowerCase() === "completed",
+        ).length;
+
+        const feeTypeName = p.FeesTypeId?.feesTypeName || "N/A";
+        const baseFee = Number(p.feeAmount || 0);
+
+        let feePerSession = 0;
+        if (feeTypeName === "PerSession") feePerSession = baseFee;
+        else if (feeTypeName === "PerMonth") feePerSession = baseFee / 26;
+
+        const totalIncome = Number((completed * feePerSession).toFixed(2));
+
+        return {
+          _id: p._id,
+          patientName: p.patientName,
+          feeType: feeTypeName,
+          feePerSession: Number(feePerSession.toFixed(2)),
+          totalCompletedSessions: completed,
+          totalIncome,
+        };
+      }),
+    );
+
+    const totalIncome = result.reduce(
+      (sum, p) => sum + (p.totalIncome || 0),
+      0,
+    );
+
+    return res.status(200).json({
+      totalIncome: Number(totalIncome.toFixed(2)),
+      patients: result,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 // exports.getAllPatientsIncome = async (req, res) => {
 //   try {
 //     const { month, year } = req.body;
