@@ -95,22 +95,59 @@ exports.getIncomeByDate = async (req, res) => {
 };
 exports.getTodayIncome = async (req, res) => {
   try {
-    const today = new Date();
-    const startDate = new Date(today);
-    startDate.setHours(0, 0, 0, 0);
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
 
-    const endDate = new Date(today);
-    endDate.setHours(23, 59, 59, 999);
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
 
-    // Reuse getIncomeByDate logic by calling same code style:
-    req.body = {
-      fromDate: startDate.toISOString().slice(0, 10),
-      toDate: endDate.toISOString().slice(0, 10),
-    };
+    const completedStatus = await SessionStatus.findOne({
+      sessionStatusName: "Completed",
+    }).select("_id");
 
-    return exports.getIncomeByDate(req, res);
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
+    const MONTHLY_ID = "691af5c343be7d5e2861981f";
+
+    const data = await Session.aggregate([
+      {
+        $match: {
+          sessionDate: { $gte: start, $lte: end },
+          sessionStatusId: completedStatus._id,
+        },
+      },
+      {
+        $lookup: {
+          from: "patients",
+          localField: "patientId",
+          foreignField: "_id",
+          as: "patient",
+        },
+      },
+      { $unwind: "$patient" },
+      {
+        $group: {
+          _id: null,
+          totalCompletedCount: { $sum: 1 },
+          totalCompletedAmount: {
+            $sum: {
+              $cond: [
+                { $eq: [{ $toString: "$patient.FeesTypeId" }, MONTHLY_ID] },
+                { $divide: ["$patient.feeAmount", 26] }, // monthly => per session
+                "$patient.feeAmount", // per session
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    return res.json({
+      totalCompletedAmount: Number(
+        data?.[0]?.totalCompletedAmount || 0,
+      ).toFixed(2),
+      totalCompletedCount: data?.[0]?.totalCompletedCount || 0,
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
   }
 };
 
