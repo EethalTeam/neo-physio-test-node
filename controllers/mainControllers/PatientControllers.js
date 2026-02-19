@@ -492,6 +492,8 @@ exports.getAllPatientsIncome = async (req, res) => {
         return {
           _id: p._id,
           patientName: p.patientName,
+          physioName: p.physioId?.physioName,
+          physioId: p.physioId?._id,
           feeType: feeTypeName || "N/A",
           feePerSession:
             feeTypeName === "PerMonth" ? (baseFee / 26).toFixed(2) : baseFee,
