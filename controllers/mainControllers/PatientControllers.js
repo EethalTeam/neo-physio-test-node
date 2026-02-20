@@ -477,16 +477,34 @@ exports.getAllPatientsIncome = async (req, res) => {
             s.sessionStatusId?.sessionStatusName &&
             s.sessionStatusId.sessionStatusName.toLowerCase() === "completed",
         );
+        const pendingSessions = sessions.filter(
+          (s) =>
+            (s.sessionStatusId?.sessionStatusName &&
+            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed" ) && (s.isPaid === false || s.isPaid === undefined) ,
+        );
+        const receivedSessions = sessions.filter(
+          (s) =>
+            (s.sessionStatusId?.sessionStatusName &&
+            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed" ) && s.isPaid === true,
+        );
         const totalCompleted = completedSessions.length;
+        const totalPending = pendingSessions.length;
+        const totalReceived = receivedSessions.length;
         let totalIncome = 0;
+        let paymentReceived = 0;
+        let paymentPending = 0;
         const feeTypeName = p.FeesTypeId?.feesTypeName;
         const baseFee = p.feeAmount || 0;
 
         if (feeTypeName === "PerSession") {
           totalIncome = baseFee * totalCompleted;
+          paymentReceived = baseFee * totalReceived;
+          paymentPending = baseFee * totalPending;
         } else if (feeTypeName === "PerMonth") {
           const ratePerSession = baseFee / 26;
           totalIncome = ratePerSession * totalCompleted;
+          paymentReceived = ratePerSession * totalReceived;
+          paymentPending = ratePerSession * totalPending;
         }
 
         return {
@@ -499,6 +517,10 @@ exports.getAllPatientsIncome = async (req, res) => {
             feeTypeName === "PerMonth" ? (baseFee / 26).toFixed(2) : baseFee,
           totalCompletedSessions: totalCompleted,
           totalIncome: Number(totalIncome.toFixed(2)),
+          totalReceived: totalReceived,
+          totalPending: totalPending,
+          paymentReceived: Number(paymentReceived.toFixed(2)),
+          paymentPending: Number(paymentPending.toFixed(2)),
         };
       }),
     );
@@ -758,7 +780,7 @@ exports.updatePatientGoals = async (req, res) => {
         status: "Reviewed & Completed",
         date: new Date().toISOString().split("T")[0],
       };
-      console.log(prevGoalEntry, "prevGoalEntry");
+      // console.log(prevGoalEntry, "prevGoalEntry");
       patient.goalLog = patient.goalLog || [];
       patient.goalLog.push(prevGoalEntry);
     }
@@ -770,7 +792,6 @@ exports.updatePatientGoals = async (req, res) => {
     if (goalDuration !== undefined) {
       patient.goalDuration = Number(goalDuration);
     }
-    console.log(patient, "patient");
     patient.updatedAt = new Date();
     await patient.save();
 
