@@ -88,6 +88,10 @@ const sessionSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isBilled: {
+      type: Boolean,
+      default: false,
+    },
     modalities: {
       type: Boolean,
       default: false,

@@ -11,6 +11,7 @@ const DashBoardControllers = require("../controllers/mainControllers/DashBoardCo
 const ReviewTypeControllers = require("../controllers/mainControllers/ReviewTypeControllers");
 const ReviewControllers = require("../controllers/mainControllers/ReviewControllers");
 const ConsultationControllers = require("../controllers/mainControllers/ConsultationControllers");
+const BillCountrollers = require("../controllers/mainControllers/BillControllers");
 
 //Leads
 router.post("/Lead/createLead", LeadControllers.createLead);
@@ -20,6 +21,10 @@ router.post("/Lead/updateLead", LeadControllers.updateLead);
 router.post("/Lead/deleteLead", LeadControllers.deleteLead);
 router.post("/Lead/QualifyLead", LeadControllers.QualifyLead);
 
+//Bill
+router.post("/Bill/createBill", BillCountrollers.createBill);
+router.post("/Bill/getAllBill", BillCountrollers.getAllBill);
+router.post("/Bill/deleteBill", BillCountrollers.deleteBill);
 //Physio
 router.post(
   "/Physio/createPhysio",
