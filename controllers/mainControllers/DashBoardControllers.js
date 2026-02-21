@@ -244,6 +244,10 @@ exports.getAllDashBoard = async (req, res) => {
     let todaysession = await Session.find({
       sessionDate: { $gte: startDay, $lt: endDay },
     });
+    let todayCompletedSession = await Session.find({
+      sessionStatusId: completedStatus?._id,
+      sessionDate: { $gte: startDay, $lt: endDay },
+    });
 
     let filter = {
       lead: lead.length,
@@ -257,6 +261,7 @@ exports.getAllDashBoard = async (req, res) => {
       patientRecover: patientRecover.length,
       sessionCompleted: completedSessionsCount.length,
       todaysession: todaysession.length,
+      todayCompletedSession: todayCompletedSession.length,
     };
 
     return res.status(200).json(filter);

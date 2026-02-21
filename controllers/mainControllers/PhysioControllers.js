@@ -231,9 +231,11 @@ exports.getAllPhysios = async (req, res) => {
 
     const filter = {
       roleId: {
-        $in: [
-          new mongoose.Types.ObjectId("6926ca2ccddb76460d277717"),
-          new mongoose.Types.ObjectId("6926ca19cddb76460d277710"),
+        $nin: [
+          new mongoose.Types.ObjectId("6926c87fcddb76460d277682"),
+          // new mongoose.Types.ObjectId("6926ca2ccddb76460d277717"),
+          // new mongoose.Types.ObjectId("6926ca19cddb76460d277710"),
+          // new mongoose.Types.ObjectId("6926c982cddb76460d2776ca"),
         ],
       },
     };
