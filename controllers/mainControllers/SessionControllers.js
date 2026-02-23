@@ -444,6 +444,10 @@ exports.updateSession = async (req, res) => {
 exports.deleteSession = async (req, res) => {
   try {
     const { _id } = req.body;
+    // If _id comes as object, extract real id
+    if (typeof _id === "object" && _id._id) {
+      _id = _id._id;
+    }
 
     if (!mongoose.Types.ObjectId.isValid(_id)) {
       return res.status(400).json({ message: "Invalid ID" });
