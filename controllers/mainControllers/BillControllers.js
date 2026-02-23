@@ -10,6 +10,8 @@ exports.createBill = async (req, res) => {
       ToDate,
       ratePerSession,
       totalAmount,
+      paymentType,
+      ReceivedAmount,
       TotalSessionCount,
     } = req.body;
     // Check for duplicates (if needed)
@@ -28,6 +30,8 @@ exports.createBill = async (req, res) => {
       startDate,
       ToDate,
       ratePerSession,
+      ReceivedAmount,
+      paymentType,
       totalAmount,
       TotalSessionCount,
     });

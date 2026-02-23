@@ -15,6 +15,10 @@ const LeaveSchema = new mongoose.Schema(
     LeaveMode: {
       type: String,
     },
+    PaidLeave: {
+      type: Boolean,
+      default: false,
+    },
     SessionGenerateForLeave: [
       {
         patientId: {

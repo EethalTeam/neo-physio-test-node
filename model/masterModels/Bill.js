@@ -12,6 +12,13 @@ const billSchema = new mongoose.Schema(
       ref: "Physio",
       required: true,
     },
+    paymentType: {
+      type: String,
+      required: true,
+    },
+    ReceivedAmount: {
+      type: Number,
+    },
     startDate: {
       type: Date,
       required: true,
@@ -32,7 +39,7 @@ const billSchema = new mongoose.Schema(
     year: {
       type: Number,
     },
-    sessionCount: { type: Number },
+    TotalSessionCount: { type: Number },
   },
   {
     timestamps: true,

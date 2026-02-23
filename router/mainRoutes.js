@@ -12,7 +12,20 @@ const ReviewTypeControllers = require("../controllers/mainControllers/ReviewType
 const ReviewControllers = require("../controllers/mainControllers/ReviewControllers");
 const ConsultationControllers = require("../controllers/mainControllers/ConsultationControllers");
 const BillCountrollers = require("../controllers/mainControllers/BillControllers");
+const CreditControllers = require("../controllers/mainControllers/CreditController");
+const DebitControllers = require("../controllers/mainControllers/DebitControllers");
+const LeaveControllers = require("../controllers/mainControllers/LeaveControllers");
 
+// DebitPayment
+router.post("/Debit/createDebit", DebitControllers.createDebitPayment);
+router.post("/Debit/getAllDebit", DebitControllers.getAllDebitPayment);
+router.post("/Debit/updateDebit", DebitControllers.updateDebitPayment);
+router.post("/Debit/deleteDebit", DebitControllers.deleteDebitPayment);
+//CrediPayment
+router.post("/Credit/createCredit", CreditControllers.createCreditPayment);
+router.post("/Credit/getAllCredit", CreditControllers.getAllCreditPayment);
+router.post("/Credit/updateCredit", CreditControllers.updateCreditPayment);
+router.post("/Credit/deleteCredit", CreditControllers.deleteCreditPayment);
 //Leads
 router.post("/Lead/createLead", LeadControllers.createLead);
 router.post("/Lead/getAllLead", LeadControllers.getAllLeads);
@@ -45,8 +58,15 @@ router.post("/Physio/loginPhysio", physioControllers.loginPhysio);
 router.post("/Physio/logoutPhysio", physioControllers.logoutPhysio);
 router.post("/Physio/logoutUser", physioControllers.logoutUser);
 router.post("/Physio/checkLogin", physioControllers.checkLogin);
-router.post("/Physio/markLeave", physioControllers.markLeave);
-router.post("/Physio/getAllLeave", physioControllers.getAllLeave);
+
+//Leave
+router.post("/LeaveControllers/saveLeavePlan", LeaveControllers.saveLeavePlan);
+router.post(
+  "/LeaveControllers/updateLeavePaid",
+  LeaveControllers.updateLeavePaidStatus,
+);
+router.post("/LeaveControllers/markLeave", LeaveControllers.markLeave);
+router.post("/LeaveControllers/getAllLeave", LeaveControllers.getAllLeave);
 //Patients
 router.post("/Patient/createPatient", PatientControllers.createPatients);
 router.post("/Patient/getAllPatient", PatientControllers.getAllPatients);
@@ -118,7 +138,6 @@ router.post(
   "/PetrolAllowance/getAllPetrolAllowance",
   PetrolAllowanceControllers.getAllPetrol,
 );
-router.post("/Physio/saveLeavePlan", physioControllers.saveLeavePlan);
 //DashBoardControllers
 router.post("/DashBoard/getAllDashBoard", DashBoardControllers.getAllDashBoard);
 router.post("/DashBoard/monthlyfunnel", DashBoardControllers.monthlyfunnel);
