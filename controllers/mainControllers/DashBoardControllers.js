@@ -156,8 +156,9 @@ exports.getAllDashBoard = async (req, res) => {
     let { fromDate, toDate } = req.body;
     let dateQuery = {};
 
-    if (fromDate && !toDate) {
-      toDate = fromDate;
+    if (fromDate && !toDate) toDate = fromDate;
+
+    if (fromDate && toDate) {
       dateQuery = {
         createdAt: {
           $gte: new Date(fromDate + "T00:00:00.000Z"),
@@ -166,8 +167,8 @@ exports.getAllDashBoard = async (req, res) => {
       };
     }
 
-    let lead = await Leads.find(dateQuery);
-    let patient = await Patients.find({
+    let lead = await Leads.countDocuments(dateQuery);
+    let patient = await Patients.countDocuments({
       ...dateQuery,
       isRecovered: { $ne: true },
     });
@@ -242,7 +243,7 @@ exports.getAllDashBoard = async (req, res) => {
     endDay.setHours(23, 59, 59, 999);
 
     let todaysession = await Session.find({
-      sessionDate: { $gte: startDay, $lt: endDay },
+      sessionDate: { $gte: startDay, $lte: endDay },
     });
     let todayCompletedSession = await Session.find({
       sessionStatusId: completedStatus?._id,
@@ -250,8 +251,8 @@ exports.getAllDashBoard = async (req, res) => {
     });
 
     let filter = {
-      lead: lead.length,
-      patient: patient.length,
+      lead: lead,
+      patient: patient,
       physio: physio.length,
       monthlySessions: monthlySessions.length,
       pendingreviews: pendingreviews.length,
