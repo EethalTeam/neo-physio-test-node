@@ -19,6 +19,9 @@ const billSchema = new mongoose.Schema(
     ReceivedAmount: {
       type: Number,
     },
+    BilledAmount: {
+      type: Number,
+    },
     startDate: {
       type: Date,
       required: true,
