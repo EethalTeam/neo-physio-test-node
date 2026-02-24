@@ -11,6 +11,7 @@ const PetrolAllowance = require("../../model/masterModels/PetrolAllowance");
 const Physio = require("../../model/masterModels/Physio");
 const RoleBased = require("../../model/masterModels/RBAC");
 const Counter = require("../../model/masterModels/Counter");
+const LeaveModel = require("../../model/masterModels/Leave");
 const moment = require("moment-timezone");
 
 const getISTDateRange = () => {
@@ -168,12 +169,14 @@ exports.initDailySessionGeneration = () => {
         const completedStatusId = "691ec69eae0e10763c8f21e0";
         const pendingStatusId = "691ecb36b87c5c57dead47a7";
 
+        // 1. Fetch all active patients
         const activePatients = await Patient.find({
           isRecovered: false,
           sessionStartDate: { $lte: end },
         }).sort({ visitOrder: 1 });
 
         for (const patient of activePatients) {
+          // 2. Check if session already exists for today
           const exists = await Session.findOne({
             patientId: patient._id,
             sessionDate: { $gte: start, $lte: end },
@@ -181,6 +184,37 @@ exports.initDailySessionGeneration = () => {
 
           if (exists) continue;
 
+          // --- LEAVE & REASSIGNMENT LOGIC START ---
+          let finalPhysioId = patient.physioId;
+          let finalSessionTime = patient.sessionTime;
+
+          // Check if the assigned physio is on leave today
+          const leaveRecord = await LeaveModel.findOne({
+            physioId: patient.physioId,
+            LeaveDate: { $gte: start, $lte: end },
+            isActive: true,
+          });
+
+          if (leaveRecord && leaveRecord.SessionGenerateForLeave) {
+            // Find if this specific patient is reassigned in the leave record
+            const reassignmentData = leaveRecord.SessionGenerateForLeave.find(
+              (item) => item.patientId.toString() === patient._id.toString(),
+            );
+
+            if (reassignmentData && reassignmentData.Re_Assign) {
+              finalPhysioId = reassignmentData.Re_Assign;
+              // If a specific time was set during reassignment, use it; otherwise use patient's default
+              finalSessionTime =
+                reassignmentData.sessionTime || patient.sessionTime;
+
+              console.log(
+                `Reassigning Patient ${patient._id} from ${patient.physioId} to ${finalPhysioId}`,
+              );
+            }
+          }
+          // --- LEAVE & REASSIGNMENT LOGIC END ---
+
+          // 3. Increment Session Code Counter
           const counter = await Counter.findOneAndUpdate(
             { _id: "sessionCode" },
             { $inc: { seq: 1 } },
@@ -188,6 +222,8 @@ exports.initDailySessionGeneration = () => {
           );
 
           const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
+
+          // 4. Calculate Session Count
           const completedCount = await Session.countDocuments({
             patientId: patient._id,
             sessionStatusId: completedStatusId,
@@ -195,26 +231,21 @@ exports.initDailySessionGeneration = () => {
 
           const currentSessionCount = completedCount + 1;
 
-          // if (
-          //   patient.totalSessionDays &&
-          //   currentSessionCount > patient.totalSessionDays
-          // )
-          //   continue;s
-
+          // 5. Create the Session
           await Session.create({
             sessionCode: formattedCode,
             patientId: patient._id,
-            physioId: patient.physioId,
+            physioId: finalPhysioId, // Uses reassigned ID if on leave
             sessionDate: start,
             sessionDay: start.toLocaleDateString("en-IN", { weekday: "long" }),
-            sessionTime: patient.sessionTime,
+            sessionTime: finalSessionTime, // Uses reassigned time if on leave
             targetArea: patient.targetedArea,
             sessionStatusId: pendingStatusId,
             sessionCount: currentSessionCount,
             modeOfExercise: "General",
           });
         }
-        console.log(`[5AM Cron] Daily session records generated.`);
+        console.log(`[5AM Cron] Daily session records generated successfully.`);
       } catch (error) {
         console.error("Error in 5AM Generation Job:", error);
       }

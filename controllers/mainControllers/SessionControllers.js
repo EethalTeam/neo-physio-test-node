@@ -443,7 +443,7 @@ exports.updateSession = async (req, res) => {
 // Delete a session
 exports.deleteSession = async (req, res) => {
   try {
-    const { _id } = req.body;
+    let { _id } = req.body;
     // If _id comes as object, extract real id
     if (typeof _id === "object" && _id._id) {
       _id = _id._id;

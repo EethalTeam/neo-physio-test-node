@@ -239,7 +239,9 @@ exports.getAllPatients = async (req, res) => {
       }
     }
 
-    let patientFilter = {};
+    let patientFilter = {
+      isRecovered: { $ne: true },
+    };
 
     // 2. NEW LOGIC: Filter by Session Date
     if (targetDate) {
@@ -305,6 +307,7 @@ exports.getAllPatientsByPhysioAndDate = async (req, res) => {
     // Directly find patients whose main doctor is the one selected
     const patients = await Patient.find({
       physioId: new mongoose.Types.ObjectId(physioId),
+      isRecovered: { $ne: true },
     })
       .populate("FeesTypeId", "feesTypeName")
       .populate("physioId", "physioName")
@@ -479,13 +482,15 @@ exports.getAllPatientsIncome = async (req, res) => {
         );
         const pendingSessions = sessions.filter(
           (s) =>
-            (s.sessionStatusId?.sessionStatusName &&
-            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed" ) && (s.isPaid === false || s.isPaid === undefined) ,
+            s.sessionStatusId?.sessionStatusName &&
+            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed" &&
+            (s.isPaid === false || s.isPaid === undefined),
         );
         const receivedSessions = sessions.filter(
           (s) =>
-            (s.sessionStatusId?.sessionStatusName &&
-            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed" ) && s.isPaid === true,
+            s.sessionStatusId?.sessionStatusName &&
+            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed" &&
+            s.isPaid === true,
         );
         const totalCompleted = completedSessions.length;
         const totalPending = pendingSessions.length;
