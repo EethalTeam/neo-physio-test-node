@@ -14,13 +14,28 @@ const billSchema = new mongoose.Schema(
     },
     paymentType: {
       type: String,
-      required: true,
+      enum: ["Full Payment", "Partial Payment"]
+    },
+    paymentStatus: {
+      type: String,
+      enum: ["Paid", "Pending","Partially Paid"],
+      default: "Pending",
     },
     ReceivedAmount: {
       type: Number,
     },
-    BilledAmount: {
+    TotalBilledAmount: {
       type: Number,
+    },
+    DeductedFromAdvance: {
+      type: Number,
+    },
+    NetBilledAmount: {
+      type: Number,
+    },
+    isComplete: {
+      type: Boolean,
+      default: false,
     },
     startDate: {
       type: Date,
