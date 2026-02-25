@@ -131,6 +131,7 @@ router.post(
 router.post("/Session/SessionStart", SessionControllers.SessionStart);
 router.post("/Session/SessionEnd", SessionControllers.SessionEnd);
 router.post("/Session/SessionCancel", SessionControllers.SessionCancel);
+router.post("/Session/SessionRevert", SessionControllers.resetAllSessionsBillingStatus);
 
 //PetrolAllowanceControllers
 

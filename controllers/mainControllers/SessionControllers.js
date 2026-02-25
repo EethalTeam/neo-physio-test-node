@@ -95,6 +95,23 @@ exports.createSession = async (req, res) => {
   }
 };
 
+exports.resetAllSessionsBillingStatus = async (req, res) => {
+  try {
+    const result = await Session.updateMany(
+      {}, 
+      { $set: { isBilled: false } }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully reset billing status for ${result.modifiedCount} sessions.`,
+    });
+  } catch (error) {
+    console.error("Error resetting all sessions:", error);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
 // Get all Session
 // exports.getAllSession = async (req, res) => {
 //   try {
