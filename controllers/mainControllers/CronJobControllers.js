@@ -12,6 +12,7 @@ const Physio = require("../../model/masterModels/Physio");
 const RoleBased = require("../../model/masterModels/RBAC");
 const Counter = require("../../model/masterModels/Counter");
 const LeaveModel = require("../../model/masterModels/Leave");
+const Bill = require("../../model/masterModels/Bill");
 const moment = require("moment-timezone");
 
 const getISTDateRange = () => {
@@ -158,7 +159,99 @@ exports.initSessionCron = (io) => {
     { timezone: "Asia/Kolkata" },
   );
 };
+exports.initMonthlyBillingGeneration = (io) => {
+  cron.schedule(
+    // "30 23 28-31 * *",
+    "14 11 25 2 *",
+    async () => {
+      const today = new Date();
+      const lastDayOfMonth = new Date(
+        today.getFullYear(),
+        today.getMonth() + 1,
+        0,
+      ).getDate();
 
+      if (today.getDate() !== lastDayOfMonth) return;
+
+      try {
+        console.log("💳 Starting Monthly Bill Generation...");
+
+        const completedStatusId = new mongoose.Types.ObjectId(
+          "691ec69eae0e10763c8f21e0",
+        );
+
+        const startOfMonth = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          1,
+          0,
+          0,
+          0,
+        );
+        const endOfMonth = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          lastDayOfMonth,
+          23,
+          59,
+          59,
+        );
+
+        const billingData = await Session.aggregate([
+          {
+            $match: {
+              sessionStatusId: completedStatusId,
+              sessionDate: { $gte: startOfMonth, $lte: endOfMonth },
+              isBilled: false,
+            },
+          },
+          {
+            $group: {
+              _id: "$patientId",
+              sessionCount: { $sum: 1 },
+              sessions: { $push: "$_id" },
+              physioId: { $first: "$physioId" },
+            },
+          },
+        ]);
+
+        for (const item of billingData) {
+          const patient = await Patient.findById(item._id);
+          if (!patient) continue;
+
+          const rate = patient.feeAmount || 0;
+          const total = rate * item.sessionCount;
+
+          await Bill.create({
+            patientId: item._id,
+            physioId: patient.physioId,
+            paymentType: "Pending",
+            ReceivedAmount: 0,
+            startDate: startOfMonth,
+            ToDate: endOfMonth,
+            ratePerSession: rate,
+            totalAmount: total,
+            month: today.toLocaleString("default", { month: "long" }),
+            year: today.getFullYear(),
+            TotalSessionCount: item.sessionCount,
+          });
+
+          await Session.updateMany(
+            { _id: { $in: item.sessions } },
+            { $set: { isBilled: true } },
+          );
+        }
+
+        console.log(`✅ Billing completed for ${billingData.length} patients.`);
+      } catch (error) {
+        console.error("❌ Error in Monthly Billing Job:", error);
+      }
+    },
+    {
+      timezone: "Asia/Kolkata",
+    },
+  );
+};
 exports.initDailySessionGeneration = () => {
   cron.schedule(
     "0 5 * * 1-6",

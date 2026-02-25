@@ -72,6 +72,7 @@ const io = new Server(server, {
 });
 
 CronJobControllers.initSessionCron(io);
+CronJobControllers.initMonthlyBillingGeneration(io);
 CronJobControllers.initDailySessionGeneration(io);
 CronJobControllers.initScheduledReviewGeneration(io);
 CronJobControllers.initReturnJourneyAllowanceCron(io);
