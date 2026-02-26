@@ -3,22 +3,23 @@ const PayrollSchema = new mongoose.Schema(
   {
     physioId: {
       type: mongoose.Schema.Types.ObjectId,
+      ref: "Physio",
       required: true,
     },
-    month: {
+    payrRollMonth: {
       type: String,
     },
-    year: {
+    payrRollYear: {
       type: Number,
     },
-    Date: {
+    payRollDate: {
       type: Date,
       required: true,
     },
-    completedSession: {
+    payrRollCompletedSessions: {
       type: Number,
     },
-    cancelledSession: {
+    payrRollCancelledSession: {
       type: Number,
     },
     PetrolKm: {
