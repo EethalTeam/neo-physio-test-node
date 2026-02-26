@@ -691,167 +691,138 @@ exports.SessionCancel = async (req, res) => {
 };
 
 exports.SessionEnd = async (req, res) => {
+  const mongooseSession = await mongoose.startSession();
+  mongooseSession.startTransaction();
+
   try {
     const {
-      _id,
-      machineId,
-      sessionFeedbackPros,
-      redFlags,
-      targetArea,
-      modeOfExercise,
-      modalities,
-      modalitiesList,
-      sessionToTime,
-      action,
+      _id, machineId, sessionFeedbackPros, redFlags, targetArea,
+      modeOfExercise, modalities, modalitiesList, sessionToTime, action,
     } = req.body;
 
     let sessionend = {
-      _id,
-      sessionFeedbackPros,
-      redFlags,
-      targetArea,
-      modeOfExercise,
-      modalities,
-      modalitiesList,
-      sessionToTime,
+      _id, sessionFeedbackPros, redFlags, targetArea,
+      modeOfExercise, modalities, modalitiesList, sessionToTime,
     };
-    if (machineId) {
-      sessionend.machineId = machineId;
-    }
+    if (machineId) sessionend.machineId = machineId;
 
-    const Status = await SessionStatus.findOne({ sessionStatusName: action });
+    const Status = await SessionStatus.findOne({ sessionStatusName: action }).session(mongooseSession);
     if (!Status) {
-      return res.status(400).json({ message: "Session Status is not found" });
-    } else {
-      sessionend.sessionStatusId = Status._id;
+      throw new Error("Session Status is not found");
     }
+    sessionend.sessionStatusId = Status._id;
+
     const session = await Session.findByIdAndUpdate(
       _id,
       { $set: sessionend },
-      { new: true, runValidators: true },
+      { new: true, runValidators: true, session: mongooseSession },
     );
 
-    if (!session) {
-      return res.status(400).json({ message: "Session End is not found" });
+    if (!session) throw new Error("Session is not found");
+
+    const patient = await Patient.findById(session.patientId).populate("FeesTypeId").session(mongooseSession);
+
+    if (patient && patient.FeesTypeId?.feesTypeName === "PerMonth" && session.sessionCount === 26) {
+      const today = new Date();
+      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      const endOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+
+      await Bill.create([{
+        patientId: patient._id,
+        physioId: session.physioId,
+        paymentType: "Partial Payment",
+        paymentStatus: "Pending",
+        ReceivedAmount: 0,
+        TotalBilledAmount: patient.feeAmount || 0,
+        NetBilledAmount: patient.feeAmount || 0,
+        startDate: startOfMonth,
+        ToDate: endOfToday,
+        month: today.toLocaleString("default", { month: "long" }),
+        year: today.getFullYear(),
+        TotalSessionCount: session.sessionCount,
+      }], { session: mongooseSession });
+
+      await Session.updateMany(
+        { 
+          patientId: patient._id, 
+          sessionDate: { $gte: startOfMonth, $lte: endOfToday },
+          isBilled: false 
+        },
+        { $set: { isBilled: true } },
+        { session: mongooseSession }
+      );
+
+      await triggerRoleNotifications(req, session, patient, "Monthly-Bill-Alert");
     }
-    const patient = await Patient.findById(session.patientId);
 
-    // GENERATE REVIEW AND NOTIFY HOD IF REDFLAGS EXIST
     if (redFlags && redFlags.length > 0) {
-      // const formattedRedFlags = redFlags.map((id) => ({
-      //   redFlagId: new mongoose.Types.ObjectId(id.redFlagId),
-      // }));
+      const formattedRedFlags = redFlags.map(r => ({
+        redFlagId: new mongoose.Types.ObjectId(r.redFlagId?._id || r.redFlagId)
+      }));
 
-      const formattedRedFlags = (redFlags || []).map((r) => {
-        let id = r.redFlagId;
-
-        if (typeof id === "object" && id._id) {
-          id = id._id;
-        }
-
-        if (!id || !mongoose.Types.ObjectId.isValid(id)) {
-          throw new Error("Invalid redFlagId provided");
-        }
-
-        return { redFlagId: new mongoose.Types.ObjectId(id) };
-      });
-
-      const reviewTypeDefault = await ReviewType.findOne({
-        reviewTypeName: "RedFlags",
-      });
-      const reviewStatusDefault = await ReviewStatus.findOne({
-        reviewStatusName: "Pending",
-      });
+      const reviewTypeDefault = await ReviewType.findOne({ reviewTypeName: "RedFlags" }).session(mongooseSession);
+      const reviewStatusDefault = await ReviewStatus.findOne({ reviewStatusName: "Pending" }).session(mongooseSession);
 
       if (reviewTypeDefault && reviewStatusDefault) {
-        const newReview = await Review.create({
+        const newReview = await Review.create([{
           patientId: session.patientId,
           physioId: session.physioId,
           reviewDate: session.sessionDate,
           sessionId: session._id,
-          reviewTypeId: new mongoose.Types.ObjectId(reviewTypeDefault._id),
+          reviewTypeId: reviewTypeDefault._id,
           redFlags: formattedRedFlags,
-          reviewStatusId: new mongoose.Types.ObjectId(reviewStatusDefault._id),
-        });
+          reviewStatusId: reviewStatusDefault._id,
+        }], { session: mongooseSession });
 
-        // --- START NOTIFICATION LOGIC ---
-        try {
-          const roleId = await RoleBased.findOne({ RoleName: "HOD" });
-          if (!roleId) {
-            res.status(400).json({ message: "HOD role not found" });
-          }
-          const hodEmployees = await Employee.find({ roleId: roleId._id }); // Ensure "role" field matches your Employee schema
-          const io = req.app.get("socketio");
-
-          if (hodEmployees.length > 0) {
-            const notificationPromises = hodEmployees.map(async (hod) => {
-              const notification = new Notification({
-                fromEmployeeId: session.physioId,
-                toEmployeeId: hod._id,
-                message: `Red Flag Alert! A session for patient ${
-                  patient?.patientName || "N/A"
-                } has been ended with red flags.`,
-                type: "Red-Flag-Alert",
-                status: "unseen",
-                meta: {
-                  SessionId: session._id,
-                  PhysioId: session.physioId,
-                  PatientId: session.patientId,
-                  ReviewId: newReview._id,
-                },
-              });
-
-              await notification.save();
-
-              if (io) {
-                io.to(hod._id.toString()).emit(
-                  "receiveNotification",
-                  notification,
-                );
-              }
-            });
-
-            await Promise.all(notificationPromises);
-          }
-        } catch (notifyErr) {
-          console.error("HOD Notification failed:", notifyErr.message);
-        }
-        // --- END NOTIFICATION LOGIC ---
+        await triggerRoleNotifications(req, session, patient, newReview[0]);
       }
     }
 
-    // 3. PETROL ALLOWANCE LOGIC (Existing)
+    // --- PETROL ALLOWANCE (Inside Transaction) ---
     if (patient) {
-      // ... (Your existing petrol logic remains untouched) ...
-      let kmsToAdd = 0;
-
-      if (patient.visitOrder === 1) {
-        kmsToAdd = patient.KmsfromHub || 0;
-      } else {
-        kmsToAdd = patient.kmsFromPrevious || 0;
-      }
-
+      let kmsToAdd = patient.visitOrder === 1 ? (patient.KmsfromHub || 0) : (patient.kmsFromPrevious || 0);
       const allowanceDate = new Date(session.sessionDate);
       allowanceDate.setHours(12, 0, 0, 0);
 
       await PetrolAllowance.findOneAndUpdate(
         { physioId: session.physioId, date: allowanceDate },
-        {
-          $inc: {
-            completedKms: kmsToAdd,
-            finalDailyKms: kmsToAdd,
-          },
-        },
-        { new: true, upsert: true },
+        { $inc: { completedKms: kmsToAdd, finalDailyKms: kmsToAdd } },
+        { new: true, upsert: true, session: mongooseSession },
       );
     }
 
+    // 3. Commit the Transaction
+    await mongooseSession.commitTransaction();
     res.status(200).json(session);
+
   } catch (error) {
-    console.error("Error Ending Session:", error);
+    // 4. Rollback on Error
+    await mongooseSession.abortTransaction();
+    console.error("❌ Transaction Aborted. Error Ending Session:", error);
     res.status(500).json({ message: error.message });
+  } finally {
+    // 5. End Session
+    mongooseSession.endSession();
   }
 };
+
+async function triggerRoleNotifications(req, session, patient, type) {
+  const roles = await RoleBased.find({ RoleName: { $in: ["Admin", "SuperAdmin", "HOD"] } });
+  const staff = await Employee.find({ roleId: { $in: roles.map(r => r._id) } });
+  const io = req.app.get("socketio");
+
+  for (const person of staff) {
+    const note = await Notification.create({
+      fromEmployeeId: session.physioId,
+      toEmployeeId: person._id,
+      message: `Patient ${patient.patientName} reached 26 sessions. Bill generated.`,
+      type,
+      meta: { PatientId: patient._id }
+    });
+    if (io) io.to(person._id.toString()).emit("receiveNotification", note);
+  }
+}
+
 exports.sessionCancelRevert = async (req, res) => {
   try {
     const { sessionId } = req.body;
