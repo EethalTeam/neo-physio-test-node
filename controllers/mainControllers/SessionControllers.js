@@ -16,7 +16,7 @@ exports.createSession = async (req, res) => {
     const {
       patientId,
       physioId,
-      sessionDates, // ✅ array (required for multiple)
+      sessionDates, 
       sessionTime,
       sessionFromTime,
       sessionToTime,
@@ -33,90 +33,34 @@ exports.createSession = async (req, res) => {
       modalities,
     } = req.body;
 
-    if (!patientId || !physioId || !sessionTime) {
-      return res
-        .status(400)
-        .json({ message: "patientId, physioId, sessionTime are required" });
-    }
+    const completedStatusId = "691ec69eae0e10763c8f21e0";
+    const createdSessions = [];
 
-    // ✅ Normalize to array
-    const datesArr = Array.isArray(sessionDates)
-      ? sessionDates
-      : sessionDates
-        ? [sessionDates]
-        : [];
+    const baseCompletedCount = await Session.countDocuments({
+      patientId: patientId,
+      sessionStatusId: completedStatusId,
+    });
 
-    if (datesArr.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "sessionDates is required (array)" });
-    }
+    for (let i = 0; i < sessionDates.length; i++) {
+      const dateStr = sessionDates[i];
+      const currentDate = new Date(dateStr);
 
-    // ✅ Convert to Date objects (store only date at 00:00Z)
-    const normalizedDates = datesArr
-      .map((d) => {
-        // d may be "2026-02-26" or ISO string
-        const isoDate = String(d).includes("T")
-          ? String(d).slice(0, 10)
-          : String(d);
-        return new Date(`${isoDate}T00:00:00.000Z`);
-      })
-      .filter((dt) => !isNaN(dt.getTime()));
+      const counter = await Counter.findOneAndUpdate(
+        { _id: "sessionCode" },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true },
+      );
 
-    if (normalizedDates.length === 0) {
-      return res.status(400).json({ message: "Invalid sessionDates" });
-    }
+      const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
 
-    // ✅ Check duplicates (same patient+physio+date+time)
-    const existing = await Session.find({
-      patientId,
-      physioId,
-      sessionTime,
-      sessionDate: { $in: normalizedDates },
-    }).select("sessionDate sessionTime");
+      const currentSessionCount = baseCompletedCount + (i + 1);
 
-    const existingSet = new Set(
-      existing.map(
-        (x) => `${x.sessionDate.toISOString().slice(0, 10)}|${x.sessionTime}`,
-      ),
-    );
-
-    const uniqueDates = normalizedDates.filter(
-      (dt) =>
-        !existingSet.has(`${dt.toISOString().slice(0, 10)}|${sessionTime}`),
-    );
-
-    if (uniqueDates.length === 0) {
-      return res.status(200).json({
-        message: "All selected sessions already exist",
-        created: 0,
-        skipped: normalizedDates.length,
-        data: [],
-      });
-    }
-
-    // ✅ Reserve session codes in one counter update
-    const n = uniqueDates.length;
-
-    const counter = await Counter.findOneAndUpdate(
-      { _id: "sessionCode" },
-      { $inc: { seq: n } }, // reserve N codes
-      { new: true, upsert: true },
-    );
-
-    const startSeq = counter.seq - n + 1; // first allocated seq
-
-    // ✅ Build docs
-    const docs = uniqueDates.map((dt, i) => {
-      const code = `SESS-${String(startSeq + i).padStart(6, "0")}`;
-      const dayName = dt.toLocaleDateString("en-US", { weekday: "long" });
-
-      return {
-        sessionCode: code,
+      const session = new Session({
+        sessionCode: formattedCode,
         patientId,
         physioId,
-        sessionDate: dt,
-        sessionDay: dayName,
+        sessionDate: currentDate,
+        sessionDay: currentDate.toLocaleDateString("en-IN", { weekday: "long" }),
         sessionTime,
         sessionFromTime,
         sessionToTime,
@@ -131,19 +75,20 @@ exports.createSession = async (req, res) => {
         targetArea,
         media,
         modalities,
-      };
-    });
+        sessionCount: currentSessionCount,
+      });
 
-    const created = await Session.insertMany(docs);
+      const savedSession = await session.save();
+      createdSessions.push(savedSession);
+    }
 
-    return res.status(200).json({
-      message: "Session(s) created successfully",
-      created: created.length,
-      skipped: normalizedDates.length - uniqueDates.length,
-      data: created,
+    res.status(200).json({
+      message: `${createdSessions.length} sessions created successfully`,
+      data: createdSessions,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    console.error("Error creating sessions:", error);
+    res.status(500).json({ message: error.message });
   }
 };
 
