@@ -43,6 +43,9 @@ const PayrollSchema = new mongoose.Schema(
     Incentive: {
       type: Number,
     },
+    NetSalary: {
+      type: Number,
+    },
     NoofLeave: {
       type: Number,
     },
