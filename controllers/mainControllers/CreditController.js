@@ -136,102 +136,52 @@ exports.payCredit = async (req, res) => {
   session.startTransaction();
 
   try {
-    const { creditId, _id, receivedAmount, amount, receivedDate, notes } =
-      req.body;
+    const { creditId, receivedAmount, receivedDate, notes } = req.body;
 
-    const payAmount = Number(amount ?? receivedAmount);
-
-    if (!Number.isFinite(payAmount) || payAmount <= 0) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ message: "Invalid payment amount" });
-    }
-
-    const finalCreditId = creditId || _id;
-    if (!mongoose.Types.ObjectId.isValid(finalCreditId)) {
-      await session.abortTransaction();
-      session.endSession();
+    const payAmount = Number(receivedAmount);
+    if (!mongoose.Types.ObjectId.isValid(creditId))
       return res.status(400).json({ message: "Invalid creditId" });
-    }
 
-    // 1) Find credit
-    const credit = await CreditPayment.findById(finalCreditId).session(session);
-    if (!credit) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({ message: "Credit record not found" });
-    }
+    if (!Number.isFinite(payAmount) || payAmount <= 0)
+      return res.status(400).json({ message: "Invalid payment amount" });
 
-    // Treat CreditAmount as remaining if CreditRemaining not present
-    const remaining = Number(credit.CreditAmount ?? credit.CreditAmount ?? 0);
+    // 1) Get credit
+    const credit = await CreditPayment.findById(creditId).session(session);
+    if (!credit) return res.status(404).json({ message: "Credit not found" });
 
-    if (!Number.isFinite(remaining) || remaining <= 0) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ message: "No remaining credit to pay" });
-    }
-
-    if (payAmount > remaining) {
-      await session.abortTransaction();
-      session.endSession();
+    if (payAmount > credit.CreditAmount)
       return res.status(400).json({
-        message: `Payment exceeds remaining credit (${remaining})`,
+        message: `Payment exceeds credit amount (${credit.CreditAmount})`,
       });
-    }
 
-    // 2) Deduct from credit
-    const newRemaining = Number((remaining - payAmount).toFixed(2));
-
-    credit.CreditAmount = newRemaining; // keep if exists
-    credit.CreditPaidTotal = Number(
-      ((credit.CreditPaidTotal || 0) + payAmount).toFixed(2),
-    );
-    credit.status = newRemaining === 0 ? "Paid" : "Partial";
-
+    // 2) Update credit (minus)
+    credit.CreditAmount = Number((credit.CreditAmount - payAmount).toFixed(2));
+    credit.status = credit.CreditAmount === 0 ? "Paid" : "Partial";
     credit.lastReceivedAmount = payAmount;
     credit.lastReceivedDate = receivedDate
       ? new Date(receivedDate)
       : new Date();
     credit.lastNotes = notes || "";
-
     await credit.save({ session });
 
-    // 3) Update bill received amount
-    if (credit.BillId && mongoose.Types.ObjectId.isValid(credit.BillId)) {
+    // 3) Update bill received amount (plus)
+    if (credit.BillId) {
       const bill = await Bill.findById(credit.BillId).session(session);
+      if (!bill) return res.status(404).json({ message: "Bill not found" });
 
-      if (!bill) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(404).json({ message: "Linked bill not found" });
-      }
-
-      // ✅ Support both field names safely
-      const billReceivedNow = Number(
-        bill.receivedAmount ?? bill.ReceivedAmount ?? 0,
+      bill.ReceivedAmount = Number(
+        (Number(bill.ReceivedAmount || 0) + payAmount).toFixed(2),
       );
-      const newBillReceived = Number((billReceivedNow + payAmount).toFixed(2));
 
-      if (bill.receivedAmount !== undefined)
-        bill.receivedAmount = newBillReceived;
-      if (bill.ReceivedAmount !== undefined)
-        bill.ReceivedAmount = newBillReceived;
-
-      // If total exists, calculate pending + status (supports both names)
-      const billTotal = bill.totalAmount ?? bill.TotalAmount;
-      if (billTotal != null) {
-        const total = Number(billTotal || 0);
-        const pending = Number((total - newBillReceived).toFixed(2));
-
-        if (bill.pendingAmount !== undefined) bill.pendingAmount = pending;
-        if (bill.PendingAmount !== undefined) bill.PendingAmount = pending;
-
-        bill.status = pending <= 0 ? "Paid" : "Partial";
-      }
+      // optional status update
+      const pending = Number(
+        (Number(bill.NetBilledAmount || 0) - bill.ReceivedAmount).toFixed(2),
+      );
+      bill.paymentStatus = pending <= 0 ? "Paid" : "Partially Paid";
+      bill.isComplete = pending <= 0;
 
       bill.lastPaymentDate = receivedDate ? new Date(receivedDate) : new Date();
       bill.lastPaymentNotes = notes || "";
-
       await bill.save({ session });
     }
 
@@ -239,10 +189,10 @@ exports.payCredit = async (req, res) => {
     session.endSession();
 
     return res.status(200).json({
-      message: "Credit payment successful & Bill updated",
+      message: "Payment successful",
       creditId: credit._id,
       billId: credit.BillId || null,
-      CreditAmount: credit.CreditAmount ?? credit.CreditAmount,
+      remainingCredit: credit.CreditAmount,
       creditStatus: credit.status,
     });
   } catch (error) {

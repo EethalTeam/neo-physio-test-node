@@ -16,8 +16,7 @@ exports.createSession = async (req, res) => {
     const {
       patientId,
       physioId,
-      sessionDate,
-      sessionDay,
+      sessionDates, // ✅ array (required for multiple)
       sessionTime,
       sessionFromTime,
       sessionToTime,
@@ -34,73 +33,123 @@ exports.createSession = async (req, res) => {
       modalities,
     } = req.body;
 
-    const lastSession = await Session.findOne(
-      {},
-      {},
-      { sort: { createdAt: -1 } },
+    if (!patientId || !physioId || !sessionTime) {
+      return res
+        .status(400)
+        .json({ message: "patientId, physioId, sessionTime are required" });
+    }
+
+    // ✅ Normalize to array
+    const datesArr = Array.isArray(sessionDates)
+      ? sessionDates
+      : sessionDates
+        ? [sessionDates]
+        : [];
+
+    if (datesArr.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "sessionDates is required (array)" });
+    }
+
+    // ✅ Convert to Date objects (store only date at 00:00Z)
+    const normalizedDates = datesArr
+      .map((d) => {
+        // d may be "2026-02-26" or ISO string
+        const isoDate = String(d).includes("T")
+          ? String(d).slice(0, 10)
+          : String(d);
+        return new Date(`${isoDate}T00:00:00.000Z`);
+      })
+      .filter((dt) => !isNaN(dt.getTime()));
+
+    if (normalizedDates.length === 0) {
+      return res.status(400).json({ message: "Invalid sessionDates" });
+    }
+
+    // ✅ Check duplicates (same patient+physio+date+time)
+    const existing = await Session.find({
+      patientId,
+      physioId,
+      sessionTime,
+      sessionDate: { $in: normalizedDates },
+    }).select("sessionDate sessionTime");
+
+    const existingSet = new Set(
+      existing.map(
+        (x) => `${x.sessionDate.toISOString().slice(0, 10)}|${x.sessionTime}`,
+      ),
     );
-    let nextSessionNumber = 1;
 
-    // if (lastSession && lastSession.sessionCode) {
-    //   const lastNumber = parseInt(
-    //     lastSession.sessionCode.replace("SESS", ""),
-    //   );
-    //   nextSessionNumber = isNaN(lastNumber) ? 1 : lastNumber + 1;
-    // }
+    const uniqueDates = normalizedDates.filter(
+      (dt) =>
+        !existingSet.has(`${dt.toISOString().slice(0, 10)}|${sessionTime}`),
+    );
 
-    // const sessionCode = `SESS-${String(nextSessionNumber).padStart(3, "0")}`;
+    if (uniqueDates.length === 0) {
+      return res.status(200).json({
+        message: "All selected sessions already exist",
+        created: 0,
+        skipped: normalizedDates.length,
+        data: [],
+      });
+    }
+
+    // ✅ Reserve session codes in one counter update
+    const n = uniqueDates.length;
 
     const counter = await Counter.findOneAndUpdate(
       { _id: "sessionCode" },
-      { $inc: { seq: 1 } },
+      { $inc: { seq: n } }, // reserve N codes
       { new: true, upsert: true },
     );
 
-    const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
+    const startSeq = counter.seq - n + 1; // first allocated seq
 
-    // const sessionDateTime = new Date(
-    //   `${sessionDate.toISOString().split("T")[0]}T${sessionTime}:00`,
-    // );
-    // Create and save the Session
-    const session = new Session({
-      sessionCode: formattedCode,
-      patientId,
-      physioId,
-      sessionDate,
-      sessionDay,
-      sessionTime,
-      sessionFromTime,
-      // sessionDateTime,
-      sessionToTime,
-      machineId,
-      sessionStatusId,
-      sessionFeedbackPros,
-      sessionFeedbackCons,
-      modeOfExercise,
-      redFlags,
-      homeExerciseAssigned,
-      modalitiesList,
-      targetArea,
-      media,
-      modalities,
+    // ✅ Build docs
+    const docs = uniqueDates.map((dt, i) => {
+      const code = `SESS-${String(startSeq + i).padStart(6, "0")}`;
+      const dayName = dt.toLocaleDateString("en-US", { weekday: "long" });
+
+      return {
+        sessionCode: code,
+        patientId,
+        physioId,
+        sessionDate: dt,
+        sessionDay: dayName,
+        sessionTime,
+        sessionFromTime,
+        sessionToTime,
+        machineId,
+        sessionStatusId,
+        sessionFeedbackPros,
+        sessionFeedbackCons,
+        modeOfExercise,
+        redFlags,
+        homeExerciseAssigned,
+        modalitiesList,
+        targetArea,
+        media,
+        modalities,
+      };
     });
-    await session.save();
 
-    res.status(200).json({
-      message: "Session created successfully",
-      data: session,
+    const created = await Session.insertMany(docs);
+
+    return res.status(200).json({
+      message: "Session(s) created successfully",
+      created: created.length,
+      skipped: normalizedDates.length - uniqueDates.length,
+      data: created,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 
 exports.resetAllSessionsBillingStatus = async (req, res) => {
   try {
-    const result = await Session.updateMany(
-      {}, 
-      { $set: { isBilled: false } }
-    );
+    const result = await Session.updateMany({}, { $set: { isBilled: false } });
 
     return res.status(200).json({
       success: true,
@@ -108,7 +157,9 @@ exports.resetAllSessionsBillingStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("Error resetting all sessions:", error);
-    return res.status(500).json({ success: false, message: "Internal Server Error" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal Server Error" });
   }
 };
 
@@ -696,17 +747,33 @@ exports.SessionEnd = async (req, res) => {
 
   try {
     const {
-      _id, machineId, sessionFeedbackPros, redFlags, targetArea,
-      modeOfExercise, modalities, modalitiesList, sessionToTime, action,
+      _id,
+      machineId,
+      sessionFeedbackPros,
+      redFlags,
+      targetArea,
+      modeOfExercise,
+      modalities,
+      modalitiesList,
+      sessionToTime,
+      action,
     } = req.body;
 
     let sessionend = {
-      _id, sessionFeedbackPros, redFlags, targetArea,
-      modeOfExercise, modalities, modalitiesList, sessionToTime,
+      _id,
+      sessionFeedbackPros,
+      redFlags,
+      targetArea,
+      modeOfExercise,
+      modalities,
+      modalitiesList,
+      sessionToTime,
     };
     if (machineId) sessionend.machineId = machineId;
 
-    const Status = await SessionStatus.findOne({ sessionStatusName: action }).session(mongooseSession);
+    const Status = await SessionStatus.findOne({
+      sessionStatusName: action,
+    }).session(mongooseSession);
     if (!Status) {
       throw new Error("Session Status is not found");
     }
@@ -720,59 +787,91 @@ exports.SessionEnd = async (req, res) => {
 
     if (!session) throw new Error("Session is not found");
 
-    const patient = await Patient.findById(session.patientId).populate("FeesTypeId").session(mongooseSession);
+    const patient = await Patient.findById(session.patientId)
+      .populate("FeesTypeId")
+      .session(mongooseSession);
 
-    if (patient && patient.FeesTypeId?.feesTypeName === "PerMonth" && session.sessionCount === 26) {
+    if (
+      patient &&
+      patient.FeesTypeId?.feesTypeName === "PerMonth" &&
+      session.sessionCount === 26
+    ) {
       const today = new Date();
       const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      const endOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
-
-      await Bill.create([{
-        patientId: patient._id,
-        physioId: session.physioId,
-        paymentType: "Partial Payment",
-        paymentStatus: "Pending",
-        ReceivedAmount: 0,
-        TotalBilledAmount: patient.feeAmount || 0,
-        NetBilledAmount: patient.feeAmount || 0,
-        startDate: startOfMonth,
-        ToDate: endOfToday,
-        month: today.toLocaleString("default", { month: "long" }),
-        year: today.getFullYear(),
-        TotalSessionCount: session.sessionCount,
-      }], { session: mongooseSession });
-
-      await Session.updateMany(
-        { 
-          patientId: patient._id, 
-          sessionDate: { $gte: startOfMonth, $lte: endOfToday },
-          isBilled: false 
-        },
-        { $set: { isBilled: true } },
-        { session: mongooseSession }
+      const endOfToday = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate(),
+        23,
+        59,
+        59,
       );
 
-      await triggerRoleNotifications(req, session, patient, "Monthly-Bill-Alert");
+      await Bill.create(
+        [
+          {
+            patientId: patient._id,
+            physioId: session.physioId,
+            paymentType: "Partial Payment",
+            paymentStatus: "Pending",
+            ReceivedAmount: 0,
+            TotalBilledAmount: patient.feeAmount || 0,
+            NetBilledAmount: patient.feeAmount || 0,
+            startDate: startOfMonth,
+            ToDate: endOfToday,
+            month: today.toLocaleString("default", { month: "long" }),
+            year: today.getFullYear(),
+            TotalSessionCount: session.sessionCount,
+          },
+        ],
+        { session: mongooseSession },
+      );
+
+      await Session.updateMany(
+        {
+          patientId: patient._id,
+          sessionDate: { $gte: startOfMonth, $lte: endOfToday },
+          isBilled: false,
+        },
+        { $set: { isBilled: true } },
+        { session: mongooseSession },
+      );
+
+      await triggerRoleNotifications(
+        req,
+        session,
+        patient,
+        "Monthly-Bill-Alert",
+      );
     }
 
     if (redFlags && redFlags.length > 0) {
-      const formattedRedFlags = redFlags.map(r => ({
-        redFlagId: new mongoose.Types.ObjectId(r.redFlagId?._id || r.redFlagId)
+      const formattedRedFlags = redFlags.map((r) => ({
+        redFlagId: new mongoose.Types.ObjectId(r.redFlagId?._id || r.redFlagId),
       }));
 
-      const reviewTypeDefault = await ReviewType.findOne({ reviewTypeName: "RedFlags" }).session(mongooseSession);
-      const reviewStatusDefault = await ReviewStatus.findOne({ reviewStatusName: "Pending" }).session(mongooseSession);
+      const reviewTypeDefault = await ReviewType.findOne({
+        reviewTypeName: "RedFlags",
+      }).session(mongooseSession);
+      const reviewStatusDefault = await ReviewStatus.findOne({
+        reviewStatusName: "Pending",
+      }).session(mongooseSession);
 
       if (reviewTypeDefault && reviewStatusDefault) {
-        const newReview = await Review.create([{
-          patientId: session.patientId,
-          physioId: session.physioId,
-          reviewDate: session.sessionDate,
-          sessionId: session._id,
-          reviewTypeId: reviewTypeDefault._id,
-          redFlags: formattedRedFlags,
-          reviewStatusId: reviewStatusDefault._id,
-        }], { session: mongooseSession });
+        const newReview = await Review.create(
+          [
+            {
+              patientId: session.patientId,
+              physioId: session.physioId,
+              reviewDate: session.sessionDate,
+              sessionId: session._id,
+              reviewTypeId: reviewTypeDefault._id,
+              redFlags: formattedRedFlags,
+              reviewStatusId: reviewStatusDefault._id,
+            },
+          ],
+          { session: mongooseSession },
+        );
 
         await triggerRoleNotifications(req, session, patient, newReview[0]);
       }
@@ -780,7 +879,10 @@ exports.SessionEnd = async (req, res) => {
 
     // --- PETROL ALLOWANCE (Inside Transaction) ---
     if (patient) {
-      let kmsToAdd = patient.visitOrder === 1 ? (patient.KmsfromHub || 0) : (patient.kmsFromPrevious || 0);
+      let kmsToAdd =
+        patient.visitOrder === 1
+          ? patient.KmsfromHub || 0
+          : patient.kmsFromPrevious || 0;
       const allowanceDate = new Date(session.sessionDate);
       allowanceDate.setHours(12, 0, 0, 0);
 
@@ -794,7 +896,6 @@ exports.SessionEnd = async (req, res) => {
     // 3. Commit the Transaction
     await mongooseSession.commitTransaction();
     res.status(200).json(session);
-
   } catch (error) {
     // 4. Rollback on Error
     await mongooseSession.abortTransaction();
@@ -807,8 +908,12 @@ exports.SessionEnd = async (req, res) => {
 };
 
 async function triggerRoleNotifications(req, session, patient, type) {
-  const roles = await RoleBased.find({ RoleName: { $in: ["Admin", "SuperAdmin", "HOD"] } });
-  const staff = await Employee.find({ roleId: { $in: roles.map(r => r._id) } });
+  const roles = await RoleBased.find({
+    RoleName: { $in: ["Admin", "SuperAdmin", "HOD"] },
+  });
+  const staff = await Employee.find({
+    roleId: { $in: roles.map((r) => r._id) },
+  });
   const io = req.app.get("socketio");
 
   for (const person of staff) {
@@ -817,7 +922,7 @@ async function triggerRoleNotifications(req, session, patient, type) {
       toEmployeeId: person._id,
       message: `Patient ${patient.patientName} reached 26 sessions. Bill generated.`,
       type,
-      meta: { PatientId: patient._id }
+      meta: { PatientId: patient._id },
     });
     if (io) io.to(person._id.toString()).emit("receiveNotification", note);
   }

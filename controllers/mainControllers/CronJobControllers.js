@@ -165,17 +165,37 @@ exports.initSessionCron = (io) => {
 
 exports.initMonthlyBillingGeneration = (io) => {
   cron.schedule(
-    "50 16 25 2 *", 
+    "31 12 26 2 *",
     async () => {
       console.log("🔔 Monthly Billing Cron Triggered...");
       const today = new Date();
-      const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+      const lastDayOfMonth = new Date(
+        today.getFullYear(),
+        today.getMonth() + 1,
+        0,
+      ).getDate();
 
       try {
         console.log("💳 Starting Monthly Bill Generation...");
-        const completedStatusId = new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0");
-        const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0);
-        const endOfMonth = new Date(today.getFullYear(), today.getMonth(), lastDayOfMonth, 23, 59, 59);
+        const completedStatusId = new mongoose.Types.ObjectId(
+          "691ec69eae0e10763c8f21e0",
+        );
+        const startOfMonth = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          1,
+          0,
+          0,
+          0,
+        );
+        const endOfMonth = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          lastDayOfMonth,
+          23,
+          59,
+          59,
+        );
 
         const billingData = await Session.aggregate([
           {
@@ -196,30 +216,34 @@ exports.initMonthlyBillingGeneration = (io) => {
         ]);
 
         for (const item of billingData) {
-          const patient = await Patient.findById(item._id).populate("FeesTypeId");
+          const patient = await Patient.findById(item._id).populate(
+            "FeesTypeId",
+          );
           if (!patient) continue;
 
-          const feesTypeLabel = patient.FeesTypeId?.feesTypeName; 
-          if (feesTypeLabel === "PerMonth") continue; 
+          const feesTypeLabel = patient.FeesTypeId?.feesTypeName;
+          if (feesTypeLabel === "PerMonth") continue;
 
           const rate = patient.feeAmount || 0;
           const totalBilledAmount = rate * item.sessionCount; // Total before any deduction
 
           // --- ADVANCE CALCULATION LOGIC ---
-          
+
           // 1. Get total advance ever paid by patient
           const totalAdvancePaid = await Debit.aggregate([
             { $match: { patientId: item._id } },
-            { $group: { _id: null, total: { $sum: "$DebitAmount" } } }
+            { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
           ]);
-          const totalAdvance = totalAdvancePaid.length > 0 ? totalAdvancePaid[0].total : 0;
+          const totalAdvance =
+            totalAdvancePaid.length > 0 ? totalAdvancePaid[0].total : 0;
 
           // 2. Get total amount already deducted from previous bills
           const totalAlreadyDeducted = await Bill.aggregate([
             { $match: { patientId: item._id } },
-            { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } }
+            { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
           ]);
-          const usedAdvance = totalAlreadyDeducted.length > 0 ? totalAlreadyDeducted[0].total : 0;
+          const usedAdvance =
+            totalAlreadyDeducted.length > 0 ? totalAlreadyDeducted[0].total : 0;
 
           // 3. Available Advance
           let availableAdvance = totalAdvance - usedAdvance;
@@ -231,7 +255,7 @@ exports.initMonthlyBillingGeneration = (io) => {
           }
 
           const netBilledAmount = totalBilledAmount - deductedFromAdvance;
-          
+
           // Determine Payment Status based on Net Amount
           let paymentStatus = "Pending";
           // if (netBilledAmount === 0 && totalBilledAmount > 0) {
@@ -257,12 +281,14 @@ exports.initMonthlyBillingGeneration = (io) => {
             TotalSessionCount: item.sessionCount,
           });
 
-          // await Session.updateMany(
-          //   { _id: { $in: item.sessions } },
-          //   { $set: { isBilled: true } },
-          // );
+          await Session.updateMany(
+            { _id: { $in: item.sessions } },
+            { $set: { isBilled: true } },
+          );
 
-          console.log(`✅ Generated: ${patient.patientName} | Net: ₹${netBilledAmount} (Adv: ₹${deductedFromAdvance})`);
+          console.log(
+            `✅ Generated: ${patient.patientName} | Net: ₹${netBilledAmount} (Adv: ₹${deductedFromAdvance})`,
+          );
         }
 
         console.log(`✅ Billing process finished.`);
@@ -272,71 +298,6 @@ exports.initMonthlyBillingGeneration = (io) => {
     },
     { timezone: "Asia/Kolkata" },
   );
-};
-
-exports.receivePayment = async (req, res) => {
-  try {
-    const { billId } = req.params;
-    const { 
-      receivedAmount, 
-      paymentType,
-      notes, 
-      feedback 
-    } = req.body;
-
-    const bill = await Bill.findById(billId);
-    if (!bill) {
-      return res.status(404).json({ success: false, message: "Bill not found" });
-    }
-
-    const today = new Date();
-    const amountReceivedNow = Number(receivedAmount);
-    
-    const newTotalReceived = (bill.ReceivedAmount || 0) + amountReceivedNow;
-    const outstandingBalance = bill.NetBilledAmount - amountReceivedNow;
-
-    if (paymentType === "Full Payment") {
-      bill.ReceivedAmount = bill.NetBilledAmount; 
-      bill.paymentStatus = "Paid";
-      bill.paymentType = "Full Payment";
-      bill.isComplete = true; 
-    } 
-    else if (paymentType === "Partial Payment") {
-      bill.ReceivedAmount = newTotalReceived;
-      bill.paymentStatus = "Partially Paid";
-      bill.paymentType = "Partial Payment";
-      
-      if (outstandingBalance > 0) {
-        await Credit.create({
-          patientId: bill.patientId,
-          CreditAmount: outstandingBalance,
-          CreditDate: today,
-          CreditMonth: today.getMonth() + 1,
-          CreditYear: today.getFullYear(),
-          Creditdescription: `Outstanding balance from Bill ${bill._id}`,
-          Creditfeedback: feedback || "",
-          Creditnotes: notes || "System generated from partial payment"
-        });
-      }
-      
-      if (outstandingBalance <= 0) {
-        bill.paymentStatus = "Paid";
-        bill.isComplete = true;
-      }
-    }
-
-    await bill.save();
-
-    return res.status(200).json({
-      success: true,
-      message: paymentType === "Full Payment" ? "Bill closed successfully" : "Partial payment recorded and credit created",
-      data: bill
-    });
-
-  } catch (error) {
-    console.error("Error receiving payment:", error);
-    return res.status(500).json({ success: false, message: "Internal Server Error" });
-  }
 };
 
 exports.initDailySessionGeneration = () => {
