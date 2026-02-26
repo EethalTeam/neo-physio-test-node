@@ -5,6 +5,10 @@ const creditPayment = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
     },
+    BillId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Bill",
+    },
     CreditAmount: {
       type: Number,
     },

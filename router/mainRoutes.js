@@ -26,6 +26,7 @@ router.post("/Credit/createCredit", CreditControllers.createCreditPayment);
 router.post("/Credit/getAllCredit", CreditControllers.getAllCreditPayment);
 router.post("/Credit/updateCredit", CreditControllers.updateCreditPayment);
 router.post("/Credit/deleteCredit", CreditControllers.deleteCreditPayment);
+router.post("/Credit/payCredit", CreditControllers.payCredit);
 //Leads
 router.post("/Lead/createLead", LeadControllers.createLead);
 router.post("/Lead/getAllLead", LeadControllers.getAllLeads);
@@ -36,6 +37,7 @@ router.post("/Lead/QualifyLead", LeadControllers.QualifyLead);
 
 //Bill
 router.post("/Bill/createBill", BillCountrollers.createBill);
+router.post("/Bill/receivePayment", BillCountrollers.receivePayment);
 router.post("/Bill/getAllBill", BillCountrollers.getAllBill);
 router.post("/Bill/deleteBill", BillCountrollers.deleteBill);
 //Physio
@@ -131,7 +133,10 @@ router.post(
 router.post("/Session/SessionStart", SessionControllers.SessionStart);
 router.post("/Session/SessionEnd", SessionControllers.SessionEnd);
 router.post("/Session/SessionCancel", SessionControllers.SessionCancel);
-router.post("/Session/SessionRevert", SessionControllers.resetAllSessionsBillingStatus);
+router.post(
+  "/Session/SessionRevert",
+  SessionControllers.resetAllSessionsBillingStatus,
+);
 
 //PetrolAllowanceControllers
 
