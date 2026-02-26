@@ -16,8 +16,7 @@ exports.createSession = async (req, res) => {
     const {
       patientId,
       physioId,
-      sessionDate,
-      sessionDay,
+      sessionDates, 
       sessionTime,
       sessionFromTime,
       sessionToTime,
@@ -34,63 +33,61 @@ exports.createSession = async (req, res) => {
       modalities,
     } = req.body;
 
-    const lastSession = await Session.findOne(
-      {},
-      {},
-      { sort: { createdAt: -1 } },
-    );
-    let nextSessionNumber = 1;
+    const completedStatusId = "691ec69eae0e10763c8f21e0";
+    const createdSessions = [];
 
-    // if (lastSession && lastSession.sessionCode) {
-    //   const lastNumber = parseInt(
-    //     lastSession.sessionCode.replace("SESS", ""),
-    //   );
-    //   nextSessionNumber = isNaN(lastNumber) ? 1 : lastNumber + 1;
-    // }
-
-    // const sessionCode = `SESS-${String(nextSessionNumber).padStart(3, "0")}`;
-
-    const counter = await Counter.findOneAndUpdate(
-      { _id: "sessionCode" },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true },
-    );
-
-    const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
-
-    // const sessionDateTime = new Date(
-    //   `${sessionDate.toISOString().split("T")[0]}T${sessionTime}:00`,
-    // );
-    // Create and save the Session
-    const session = new Session({
-      sessionCode: formattedCode,
-      patientId,
-      physioId,
-      sessionDate,
-      sessionDay,
-      sessionTime,
-      sessionFromTime,
-      // sessionDateTime,
-      sessionToTime,
-      machineId,
-      sessionStatusId,
-      sessionFeedbackPros,
-      sessionFeedbackCons,
-      modeOfExercise,
-      redFlags,
-      homeExerciseAssigned,
-      modalitiesList,
-      targetArea,
-      media,
-      modalities,
+    const baseCompletedCount = await Session.countDocuments({
+      patientId: patientId,
+      sessionStatusId: completedStatusId,
     });
-    await session.save();
+
+    for (let i = 0; i < sessionDates.length; i++) {
+      const dateStr = sessionDates[i];
+      const currentDate = new Date(dateStr);
+
+      const counter = await Counter.findOneAndUpdate(
+        { _id: "sessionCode" },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true },
+      );
+
+      const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
+
+      const currentSessionCount = baseCompletedCount + (i + 1);
+
+      const session = new Session({
+        sessionCode: formattedCode,
+        patientId,
+        physioId,
+        sessionDate: currentDate,
+        sessionDay: currentDate.toLocaleDateString("en-IN", { weekday: "long" }),
+        sessionTime,
+        sessionFromTime,
+        sessionToTime,
+        machineId,
+        sessionStatusId,
+        sessionFeedbackPros,
+        sessionFeedbackCons,
+        modeOfExercise,
+        redFlags,
+        homeExerciseAssigned,
+        modalitiesList,
+        targetArea,
+        media,
+        modalities,
+        sessionCount: currentSessionCount,
+      });
+
+      const savedSession = await session.save();
+      createdSessions.push(savedSession);
+    }
 
     res.status(200).json({
-      message: "Session created successfully",
-      data: session,
+      message: `${createdSessions.length} sessions created successfully`,
+      data: createdSessions,
     });
   } catch (error) {
+    console.error("Error creating sessions:", error);
     res.status(500).json({ message: error.message });
   }
 };
