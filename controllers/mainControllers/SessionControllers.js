@@ -10,13 +10,18 @@ const Employee = require("../../model/masterModels/Physio");
 const RoleBased = require("../../model/masterModels/RBAC");
 const Counter = require("../../model/masterModels/Counter");
 const Notification = require("../../model/masterModels/Notification");
+const Bill = require("../../model/masterModels/Bill");
+const Debit = require("../../model/masterModels/DebitPayment");
 // Create a new Session
 exports.createSession = async (req, res) => {
+  const mongooseSession = await mongoose.startSession();
+  mongooseSession.startTransaction();
+
   try {
     const {
       patientId,
       physioId,
-      sessionDates, 
+      sessionDates,
       sessionTime,
       sessionFromTime,
       sessionToTime,
@@ -35,32 +40,59 @@ exports.createSession = async (req, res) => {
 
     const completedStatusId = "691ec69eae0e10763c8f21e0";
     const createdSessions = [];
+    const skippedDates = [];
 
     const baseCompletedCount = await Session.countDocuments({
       patientId: patientId,
       sessionStatusId: completedStatusId,
-    });
+    }).session(mongooseSession);
 
-    for (let i = 0; i < sessionDates.length; i++) {
-      const dateStr = sessionDates[i];
+    for (const dateStr of sessionDates) {
       const currentDate = new Date(dateStr);
+      console.log(currentDate, "currentDate");
+      if (currentDate.getDay() === 0) {
+        skippedDates.push({ date: dateStr, reason: "Sunday is not allowed" });
+        continue;
+      }
+
+      // const startOfDay = new Date(new Date(currentDate).setHours(0, 0, 0, 0));
+      // const endOfDay = new Date(
+      //   new Date(currentDate).setHours(23, 59, 59, 999),
+      // );
+      const startOfDayIST = new Date(`${dateStr}T00:00:00+05:30`);
+      const endOfDayIST = new Date(`${dateStr}T23:59:59.999+05:30`);
+
+      const existingSession = await Session.findOne({
+        patientId,
+        sessionDate: { $gte: startOfDayIST, $lte: endOfDayIST },
+      }).session(mongooseSession);
+      console.log(existingSession, "existingSession");
+      if (existingSession) {
+        skippedDates.push({
+          date: dateStr,
+          reason: "Session already exists for this date",
+        });
+        continue;
+      }
 
       const counter = await Counter.findOneAndUpdate(
         { _id: "sessionCode" },
         { $inc: { seq: 1 } },
-        { new: true, upsert: true },
+        { new: true, upsert: true, session: mongooseSession },
       );
 
       const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
+      const currentSessionCount =
+        baseCompletedCount + (createdSessions.length + 1);
 
-      const currentSessionCount = baseCompletedCount + (i + 1);
-
-      const session = new Session({
+      const newSession = new Session({
         sessionCode: formattedCode,
         patientId,
         physioId,
-        sessionDate: currentDate,
-        sessionDay: currentDate.toLocaleDateString("en-IN", { weekday: "long" }),
+        sessionDate: startOfDayIST,
+        sessionDay: startOfDayIST.toLocaleDateString("en-IN", {
+          weekday: "long",
+        }),
         sessionTime,
         sessionFromTime,
         sessionToTime,
@@ -78,17 +110,27 @@ exports.createSession = async (req, res) => {
         sessionCount: currentSessionCount,
       });
 
-      const savedSession = await session.save();
+      const savedSession = await newSession.save({ session: mongooseSession });
       createdSessions.push(savedSession);
     }
 
+    await mongooseSession.commitTransaction();
+
     res.status(200).json({
-      message: `${createdSessions.length} sessions created successfully`,
+      success: true,
+      message: `${createdSessions.length} sessions created successfully.`,
       data: createdSessions,
+      skipped: skippedDates,
     });
   } catch (error) {
-    console.error("Error creating sessions:", error);
+    await mongooseSession.abortTransaction();
+    console.error(
+      "❌ Session creation failed. Transaction rolled back:",
+      error,
+    );
     res.status(500).json({ message: error.message });
+  } finally {
+    mongooseSession.endSession();
   }
 };
 
@@ -704,8 +746,8 @@ exports.SessionEnd = async (req, res) => {
       action,
     } = req.body;
 
-    let sessionend = {
-      _id,
+    // 1. Prepare Session Update Object
+    let sessionUpdateData = {
       sessionFeedbackPros,
       redFlags,
       targetArea,
@@ -714,34 +756,101 @@ exports.SessionEnd = async (req, res) => {
       modalitiesList,
       sessionToTime,
     };
-    if (machineId) sessionend.machineId = machineId;
+    if (machineId) sessionUpdateData.machineId = machineId;
 
+    // 2. Resolve Status
     const Status = await SessionStatus.findOne({
       sessionStatusName: action,
     }).session(mongooseSession);
-    if (!Status) {
-      throw new Error("Session Status is not found");
-    }
-    sessionend.sessionStatusId = Status._id;
+    if (!Status) throw new Error("Session Status is not found");
+    sessionUpdateData.sessionStatusId = Status._id;
 
+    // 3. Update Session
     const session = await Session.findByIdAndUpdate(
       _id,
-      { $set: sessionend },
+      { $set: sessionUpdateData },
       { new: true, runValidators: true, session: mongooseSession },
     );
+    if (!session) throw new Error("Session not found");
 
-    if (!session) throw new Error("Session is not found");
-
+    // 4. Fetch Patient and FeesType
     const patient = await Patient.findById(session.patientId)
       .populate("FeesTypeId")
       .session(mongooseSession);
+    if (!patient) throw new Error("Patient not found");
 
+    // --- START: PER MONTH BILLING LOGIC (TRIGGER AT SESSION 26) ---
     if (
-      patient &&
       patient.FeesTypeId?.feesTypeName === "PerMonth" &&
       session.sessionCount === 26
     ) {
       const today = new Date();
+      const currentMonth = today.getMonth() + 1; // Converts 0-11 to 1-12
+      const currentYear = today.getFullYear();
+
+      console.log(
+        `--- 🔍 DEBUG: Billing Calculation for ${patient.patientName} ---`,
+      );
+      console.log(`📅 Target Month: ${currentMonth} | Year: ${currentYear}`);
+
+      const totalBilledAmount = patient.feeAmount || 0;
+      console.log(
+        `💰 Base Monthly Fee (from Patient Schema): ₹${totalBilledAmount}`,
+      );
+      const debitDoc = await Debit.findOne({
+        patientId: patient._id,
+        DebitAmount: { $gt: 0 },
+      })
+        .sort({ DebitDate: 1 })
+        .session(mongooseSession);
+      const availableAdvance = Number(debitDoc?.DebitAmount || 0);
+
+      // Loophole Check: Verify if DebitMonth/Year matches the aggregation filter
+      const monthlyAdvanceRecord = await Debit.aggregate([
+        {
+          $match: {
+            patientId: patient._id,
+            DebitMonth: currentMonth,
+            DebitYear: currentYear,
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
+      ]).session(mongooseSession);
+
+      console.log(`📦 Aggregation Result for Debit:`, monthlyAdvanceRecord);
+
+      const availableMonthlyAdvance =
+        monthlyAdvanceRecord.length > 0 ? monthlyAdvanceRecord[0].total : 0;
+      console.log(
+        `💵 Calculated Available Advance: ₹${availableMonthlyAdvance}`,
+      );
+
+      // Logic for deduction
+      let deductedFromAdvance = Math.min(
+        availableMonthlyAdvance,
+        totalBilledAmount,
+      );
+      let netBilledAmount = totalBilledAmount - deductedFromAdvance;
+
+      console.log(
+        `⚖️  Calculation: ₹${totalBilledAmount} (Billed) - ₹${deductedFromAdvance} (Deducted) = ₹${netBilledAmount} (Net)`,
+      );
+
+      let paymentStatus = "Pending";
+      if (netBilledAmount === 0 && totalBilledAmount > 0) {
+        paymentStatus = "Paid";
+      } else if (deductedFromAdvance > 0) {
+        paymentStatus = "Partially Paid";
+      } // ✅ Consume debit (reduce balance) inside same transaction
+      if (debitDoc && deductedFromAdvance > 0) {
+        debitDoc.DebitAmount = Number(
+          (Number(debitDoc.DebitAmount || 0) - deductedFromAdvance).toFixed(2),
+        );
+        debitDoc.DebitDate = new Date(); // optional
+        await debitDoc.save({ session: mongooseSession });
+      }
+
+      // Create the Bill record
       const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
       const endOfToday = new Date(
         today.getFullYear(),
@@ -758,20 +867,22 @@ exports.SessionEnd = async (req, res) => {
             patientId: patient._id,
             physioId: session.physioId,
             paymentType: "Partial Payment",
-            paymentStatus: "Pending",
-            ReceivedAmount: 0,
-            TotalBilledAmount: patient.feeAmount || 0,
-            NetBilledAmount: patient.feeAmount || 0,
+            paymentStatus: paymentStatus,
+            ReceivedAmount: deductedFromAdvance,
+            TotalBilledAmount: totalBilledAmount,
+            DeductedFromAdvance: deductedFromAdvance,
+            NetBilledAmount: netBilledAmount,
             startDate: startOfMonth,
             ToDate: endOfToday,
             month: today.toLocaleString("default", { month: "long" }),
-            year: today.getFullYear(),
+            year: currentYear,
             TotalSessionCount: session.sessionCount,
           },
         ],
         { session: mongooseSession },
       );
 
+      // Mark sessions of this month as billed
       await Session.updateMany(
         {
           patientId: patient._id,
@@ -782,6 +893,9 @@ exports.SessionEnd = async (req, res) => {
         { session: mongooseSession },
       );
 
+      console.log(`✅ Bill generated successfully for ${patient.patientName}`);
+      console.log(`--- 🔍 DEBUG END ---`);
+
       await triggerRoleNotifications(
         req,
         session,
@@ -789,7 +903,9 @@ exports.SessionEnd = async (req, res) => {
         "Monthly-Bill-Alert",
       );
     }
+    // --- END: PER MONTH BILLING LOGIC ---
 
+    // 5. Red Flags & Review Logic
     if (redFlags && redFlags.length > 0) {
       const formattedRedFlags = redFlags.map((r) => ({
         redFlagId: new mongoose.Types.ObjectId(r.redFlagId?._id || r.redFlagId),
@@ -818,36 +934,37 @@ exports.SessionEnd = async (req, res) => {
           { session: mongooseSession },
         );
 
-        await triggerRoleNotifications(req, session, patient, newReview[0]);
+        await triggerRoleNotifications(
+          req,
+          session,
+          patient,
+          "Red-Flag-Alert",
+          newReview[0]._id,
+        );
       }
     }
 
-    // --- PETROL ALLOWANCE (Inside Transaction) ---
-    if (patient) {
-      let kmsToAdd =
-        patient.visitOrder === 1
-          ? patient.KmsfromHub || 0
-          : patient.kmsFromPrevious || 0;
-      const allowanceDate = new Date(session.sessionDate);
-      allowanceDate.setHours(12, 0, 0, 0);
+    // 6. Petrol Allowance Logic
+    let kmsToAdd =
+      patient.visitOrder === 1
+        ? patient.KmsfromHub || 0
+        : patient.kmsFromPrevious || 0;
+    const allowanceDate = new Date(session.sessionDate);
+    allowanceDate.setHours(12, 0, 0, 0);
 
-      await PetrolAllowance.findOneAndUpdate(
-        { physioId: session.physioId, date: allowanceDate },
-        { $inc: { completedKms: kmsToAdd, finalDailyKms: kmsToAdd } },
-        { new: true, upsert: true, session: mongooseSession },
-      );
-    }
+    await PetrolAllowance.findOneAndUpdate(
+      { physioId: session.physioId, date: allowanceDate },
+      { $inc: { completedKms: kmsToAdd, finalDailyKms: kmsToAdd } },
+      { new: true, upsert: true, session: mongooseSession },
+    );
 
-    // 3. Commit the Transaction
     await mongooseSession.commitTransaction();
     res.status(200).json(session);
   } catch (error) {
-    // 4. Rollback on Error
     await mongooseSession.abortTransaction();
-    console.error("❌ Transaction Aborted. Error Ending Session:", error);
+    console.error("❌ SessionEnd Failed. Transaction Aborted:", error.message);
     res.status(500).json({ message: error.message });
   } finally {
-    // 5. End Session
     mongooseSession.endSession();
   }
 };

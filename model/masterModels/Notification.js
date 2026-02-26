@@ -31,31 +31,35 @@ const notificationSchema = new mongoose.Schema(
         "Chat-Message",
         "group-chat-message",
         "announcement",
+        `Monthly-Bill-Alert`,
         "Session-Update",
         "Session-Cancellation",
         "Session-Extended",
         "Pending-Review",
         "Review-Completed",
         "general",
-        "other"
+        "other",
       ],
       default: "general",
     },
     status: {
       type: String,
-      enum: ["unseen", "seen","approved","rejected"],
+      enum: ["unseen", "seen", "approved", "rejected"],
       default: "unseen",
     },
     meta: {
       SessionId: { type: mongoose.Schema.Types.ObjectId, ref: "Session" },
       PhysioId: { type: mongoose.Schema.Types.ObjectId, ref: "Physio" },
       PatientId: { type: mongoose.Schema.Types.ObjectId, ref: "Patient" },
-      ReviewId: { type: mongoose.Schema.Types.ObjectId, ref: "Review"  },
-      ConsultationId: { type: mongoose.Schema.Types.ObjectId, ref: "Consultation"  },
-      LeadId: { type: mongoose.Schema.Types.ObjectId, ref: "Lead"  },
+      ReviewId: { type: mongoose.Schema.Types.ObjectId, ref: "Review" },
+      ConsultationId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Consultation",
+      },
+      LeadId: { type: mongoose.Schema.Types.ObjectId, ref: "Lead" },
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 module.exports = mongoose.model("Notification", notificationSchema);
