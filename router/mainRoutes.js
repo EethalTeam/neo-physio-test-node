@@ -15,6 +15,13 @@ const BillCountrollers = require("../controllers/mainControllers/BillControllers
 const CreditControllers = require("../controllers/mainControllers/CreditController");
 const DebitControllers = require("../controllers/mainControllers/DebitControllers");
 const LeaveControllers = require("../controllers/mainControllers/LeaveControllers");
+const PayrollControllers = require("../controllers/mainControllers/PayrollControllers");
+
+//PAyroll
+router.post("/payroll/createPayroll", PayrollControllers.createPayroll);
+router.post("/payroll/getAllPayroll", PayrollControllers.getAllPayroll);
+router.post("/payroll/updatePayroll", PayrollControllers.updatePayroll);
+router.post("/payroll/deletePayroll", PayrollControllers.deletePayroll);
 
 // DebitPayment
 router.post("/Debit/createDebit", DebitControllers.createDebitPayment);

@@ -43,6 +43,15 @@ const PayrollSchema = new mongoose.Schema(
     Incentive: {
       type: Number,
     },
+    NoofLeave: {
+      type: Number,
+    },
+    TotalSalary: {
+      Type: Number,
+    },
+    TotalAmountDeducted: {
+      Type: Number,
+    },
     amountperKm: {
       type: Number,
     },

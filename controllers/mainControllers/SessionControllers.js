@@ -868,7 +868,7 @@ exports.SessionEnd = async (req, res) => {
             physioId: session.physioId,
             paymentType: "Partial Payment",
             paymentStatus: paymentStatus,
-            ReceivedAmount: deductedFromAdvance,
+            // ReceivedAmount: deductedFromAdvance,
             TotalBilledAmount: totalBilledAmount,
             DeductedFromAdvance: deductedFromAdvance,
             NetBilledAmount: netBilledAmount,
