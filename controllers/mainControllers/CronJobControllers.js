@@ -12,6 +12,7 @@ const Physio = require("../../model/masterModels/Physio");
 const RoleBased = require("../../model/masterModels/RBAC");
 const Counter = require("../../model/masterModels/Counter");
 const LeaveModel = require("../../model/masterModels/Leave");
+const Payroll = require("../../model/masterModels/Payroll");
 const Bill = require("../../model/masterModels/Bill");
 const moment = require("moment-timezone");
 const FeesType = require("../../model/masterModels/FeesType");
@@ -555,4 +556,129 @@ exports.initReturnJourneyAllowanceCron = () => {
     },
     { timezone: "Asia/Kolkata" },
   );
+};
+
+exports.initMonthlyPayrollCron = () => {
+  cron.schedule("0 21 28-31 * *", async () => {
+    try {
+      const today = new Date();
+      const lastDayOfMonthDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      const daysInMonth = lastDayOfMonthDate.getDate();
+      
+      if (today.getDate() !== daysInMonth) return;
+
+      console.log(`🚀 Starting Payroll Generation for ${daysInMonth} days month...`);
+
+      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0);
+      const endOfMonth = new Date(today.getFullYear(), today.getMonth(), daysInMonth, 23, 59, 59);
+
+      const monthName = today.toLocaleString('default', { month: 'long' });
+      const year = today.getFullYear();
+
+      const COMPLETED_STATUS_ID = "691ec69eae0e10763c8f21e0";
+      const CANCELLED_STATUS_ID = "691ecb36b87c5c57dead47a7"; 
+
+      const physios = await Physio.find({ isActive: true });
+
+      for (const physio of physios) {
+        const sessionStats = await Session.aggregate([
+          {
+            $match: {
+              physioId: physio._id,
+              sessionDate: { $gte: startOfMonth, $lte: endOfMonth }
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              completed: {
+                $sum: { $cond: [{ $eq: ["$sessionStatusId", new mongoose.Types.ObjectId(COMPLETED_STATUS_ID)] }, 1, 0] }
+              },
+              cancelled: {
+                $sum: { $cond: [{ $eq: ["$sessionStatusId", new mongoose.Types.ObjectId(CANCELLED_STATUS_ID)] }, 1, 0] }
+              }
+            }
+          }
+        ]);
+
+        const completedCount = sessionStats[0]?.completed || 0;
+        const cancelledCount = sessionStats[0]?.cancelled || 0;
+
+        const petrolStats = await PetrolAllowance.aggregate([
+          {
+            $match: {
+              physioId: physio._id,
+              date: { $gte: startOfMonth, $lte: endOfMonth },
+              status: "Approved"
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              totalKm: { $sum: "$finalDailyKms" },
+              totalAmount: { $sum: "$totalAmount" }
+            }
+          }
+        ]);
+
+        const totalKm = petrolStats[0]?.totalKm || 0;
+        const totalPetrolAmount = petrolStats[0]?.totalAmount || 0;
+
+        const unpaidLeaveDays = await LeaveModel.countDocuments({
+          physioId: physio._id,
+          LeaveDate: { $gte: startOfMonth, $lte: endOfMonth },
+          PaidLeave: false,
+          isActive: true
+        });
+
+        const basicSalary = physio.physioSalary || 0;
+        
+        // Calculation: (30000 / 30) * 3
+        const perDaySalary = basicSalary / daysInMonth;
+        const totalAmountDeducted = Math.round(perDaySalary * unpaidLeaveDays);
+
+        // --- 4. FINAL SALARY CALCULATION ---
+        const maintenance = physio.physioVehicleMTC || 0;
+        const incentiveTotal = (physio.physioIncentive || 0) * completedCount;
+        
+        // Optional: Statutory deductions (ESI/PF)
+        const ESI = 0; 
+        const PF = 0;
+
+        const totalGrossSalary = basicSalary + maintenance + incentiveTotal + totalPetrolAmount;
+        const netSalary = totalGrossSalary - totalAmountDeducted - ESI - PF;
+
+        // 5. Save or Update Payroll
+        await Payroll.findOneAndUpdate(
+          { physioId: physio._id, payrRollMonth: monthName, payrRollYear: year },
+          {
+            payRollDate: today,
+            payrRollCompletedSessions: completedCount,
+            payrRollCancelledSession: cancelledCount,
+            PetrolKm: totalKm,
+            PetrolAmount: totalPetrolAmount,
+            basicSalary: basicSalary,
+            vehicleMaintanance: maintenance,
+            ESI: Math.round(ESI),
+            PF: Math.round(PF),
+            Incentive: incentiveTotal,
+            amountperKm: physio.physioPetrolAlw,
+            NoofLeave: unpaidLeaveDays,
+            TotalAmountDeducted: totalAmountDeducted,
+            TotalSalary: Math.round(totalGrossSalary),
+            NetSalary: Math.round(netSalary)
+          },
+          { upsert: true, new: true }
+        );
+
+        console.log(`✅ Payroll created for ${physio.physioName}: Leaves: ${unpaidLeaveDays}, Deduction: ₹${totalAmountDeducted}`);
+      }
+
+      console.log(`🏁 Monthly Payroll Generation for ${monthName} completed.`);
+    } catch (error) {
+      console.error("❌ Payroll Cron Error:", error);
+    }
+  }, {
+    timezone: "Asia/Kolkata"
+  });
 };
