@@ -18,11 +18,12 @@ const LeaveControllers = require("../controllers/mainControllers/LeaveController
 const PayrollControllers = require("../controllers/mainControllers/PayrollControllers");
 
 //PAyroll
-router.post("/payroll/createPayroll", PayrollControllers.createPayroll);
-router.post("/payroll/getAllPayroll", PayrollControllers.getAllPayroll);
-router.post("/payroll/updatePayroll", PayrollControllers.updatePayroll);
-router.post("/payroll/deletePayroll", PayrollControllers.deletePayroll);
-
+router.post("/Payroll/createPayroll", PayrollControllers.createPayroll);
+router.post("/Payroll/getAllPayroll", PayrollControllers.getAllPayroll);
+router.post("/Payroll/updatePayroll", PayrollControllers.updatePayroll);
+router.post("/Payroll/deletePayroll", PayrollControllers.deletePayroll);
+router.post("/Payroll/upsertPayroll", PayrollControllers.upsertPayroll);
+router.post("/Payroll/getPayrollById", PayrollControllers.getPayrollById);
 // DebitPayment
 router.post("/Debit/createDebit", DebitControllers.createDebitPayment);
 router.post("/Debit/getAllDebit", DebitControllers.getAllDebitPayment);
