@@ -19,6 +19,7 @@ const PayrollSchema = new mongoose.Schema(
     payrRollCompletedSessions: {
       type: Number,
     },
+    ManualDeduction: { type: Number, default: 0 },
     payrRollCancelledSession: {
       type: Number,
     },

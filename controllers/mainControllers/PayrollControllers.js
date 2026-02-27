@@ -31,6 +31,7 @@ function normalizePayload(body, { patch = false } = {}) {
       "payrRollCancelledSession",
       body.payrRollCancelledSession ?? body.cancelledSession,
     ),
+    ...num("ManualDeduction", body.ManualDeduction ?? body.manualDeduction),
 
     ...num("PetrolKm", body.PetrolKm),
     ...num("PetrolAmount", body.PetrolAmount),
@@ -146,11 +147,8 @@ exports.updatePayroll = async (req, res) => {
       return res.status(400).json({ message: "Invalid ID" });
     }
 
+    // update only fields provided
     const normalized = normalizePayload(rest, { patch: true });
-
-    Object.keys(normalized).forEach((k) => {
-      if (normalized[k] === undefined) delete normalized[k];
-    });
 
     const updated = await Payroll.findByIdAndUpdate(
       _id,
@@ -162,8 +160,43 @@ exports.updatePayroll = async (req, res) => {
       return res.status(404).json({ message: "Payroll not found" });
     }
 
+    // ✅ 1) Petrol calc if needed (optional)
+    // if you want petrolAmount always derived:
+    // updated.PetrolAmount = Number(updated.PetrolKm || 0) * Number(updated.amountperKm || 0);
+
+    // ✅ 2) Leave deduction auto calc
+    const months = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
+    const mIndex = months.indexOf(updated.payrRollMonth);
+    const year = Number(updated.payrRollYear) || new Date().getFullYear();
+    const daysInMonth =
+      mIndex >= 0 ? new Date(year, mIndex + 1, 0).getDate() : 30;
+
+    const basicSalary = Number(updated.basicSalary || 0);
+    const noOfLeave = Number(updated.NoofLeave || 0);
+    const perDay = daysInMonth ? basicSalary / daysInMonth : 0;
+    const leaveDeduction = perDay * noOfLeave;
+
+    const manual = Number(updated.ManualDeduction || 0);
+
+    // ✅ Total deduction = leave + manual
+    updated.TotalAmountDeducted = Math.round(leaveDeduction + manual);
+
+    // ✅ 3) Total + Net salary
     const totalSalary =
-      Number(updated.basicSalary || 0) +
+      basicSalary +
       Number(updated.vehicleMaintanance || 0) +
       Number(updated.PetrolAmount || 0) +
       Number(updated.Incentive || 0);
@@ -174,8 +207,8 @@ exports.updatePayroll = async (req, res) => {
       Number(updated.ESI || 0) -
       Number(updated.PF || 0);
 
-    updated.TotalSalary = totalSalary;
-    updated.NetSalary = netSalary;
+    updated.TotalSalary = Math.round(totalSalary);
+    updated.NetSalary = Math.round(netSalary);
 
     await updated.save();
 
