@@ -50,10 +50,10 @@ const PayrollSchema = new mongoose.Schema(
       type: Number,
     },
     TotalSalary: {
-      Type: Number,
+      type: Number,
     },
     TotalAmountDeducted: {
-      Type: Number,
+      type: Number,
     },
     amountperKm: {
       type: Number,

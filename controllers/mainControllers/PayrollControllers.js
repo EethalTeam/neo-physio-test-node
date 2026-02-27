@@ -146,18 +146,11 @@ exports.updatePayroll = async (req, res) => {
       return res.status(400).json({ message: "Invalid ID" });
     }
 
-    // normalize any incoming fields
     const normalized = normalizePayload(rest, { patch: true });
 
-    // Remove undefined keys so they don’t overwrite existing values
     Object.keys(normalized).forEach((k) => {
       if (normalized[k] === undefined) delete normalized[k];
     });
-
-    // Avoid updating identity keys if you don't want
-    // delete normalized.physioId;
-    // delete normalized.payrRollMonth;
-    // delete normalized.payrRollYear;
 
     const updated = await Payroll.findByIdAndUpdate(
       _id,
@@ -168,6 +161,23 @@ exports.updatePayroll = async (req, res) => {
     if (!updated) {
       return res.status(404).json({ message: "Payroll not found" });
     }
+
+    const totalSalary =
+      Number(updated.basicSalary || 0) +
+      Number(updated.vehicleMaintanance || 0) +
+      Number(updated.PetrolAmount || 0) +
+      Number(updated.Incentive || 0);
+
+    const netSalary =
+      totalSalary -
+      Number(updated.TotalAmountDeducted || 0) -
+      Number(updated.ESI || 0) -
+      Number(updated.PF || 0);
+
+    updated.TotalSalary = totalSalary;
+    updated.NetSalary = netSalary;
+
+    await updated.save();
 
     return res.status(200).json({
       message: "Payroll updated successfully",

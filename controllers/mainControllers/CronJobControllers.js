@@ -166,7 +166,9 @@ exports.initSessionCron = (io) => {
 
 exports.initMonthlyBillingGeneration = (io) => {
   cron.schedule(
-    "31 12 26 2 *",
+    // "31 12 26 2 *",
+    "0 8 28-31 * *",
+
     async () => {
       console.log("🔔 Monthly Billing Cron Triggered...");
       const today = new Date();
@@ -560,13 +562,29 @@ exports.initReturnJourneyAllowanceCron = () => {
 
 exports.initMonthlyPayrollCron = () => {
   cron.schedule(
-    "44 15 * * *",
+    "30 9 28-31 * *",
+
+    // "44 15 * * *",
     async () => {
       try {
         const today = new Date();
-        
-        const startRange = new Date(today.getFullYear(), today.getMonth() - 1, 20, 0, 0, 0);
-        const endRange = new Date(today.getFullYear(), today.getMonth(), 20, 23, 59, 59);
+
+        const startRange = new Date(
+          today.getFullYear(),
+          today.getMonth() - 1,
+          20,
+          0,
+          0,
+          0,
+        );
+        const endRange = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          20,
+          23,
+          59,
+          59,
+        );
 
         const monthName = today.toLocaleString("default", { month: "long" });
         const year = today.getFullYear();
@@ -586,7 +604,7 @@ exports.initMonthlyPayrollCron = () => {
 
           const rawPetrolRecords = await PetrolAllowance.find({
             physioId: physio._id,
-            date: { $gte: startRange, $lte: endRange }
+            date: { $gte: startRange, $lte: endRange },
           }).lean();
 
           // console.log(`--- ⛽ RAW PETROL DATA CHECK ---`);
@@ -595,7 +613,7 @@ exports.initMonthlyPayrollCron = () => {
           } else {
             let debugTotalKm = 0;
             rawPetrolRecords.forEach((rec, index) => {
-              debugTotalKm += (rec.finalDailyKms || 0);
+              debugTotalKm += rec.finalDailyKms || 0;
               // console.log(
               //   `[${index + 1}] Date: ${rec.date.toISOString().split('T')[0]} | ` +
               //   `Kms: ${rec.finalDailyKms} | ` +
@@ -613,7 +631,7 @@ exports.initMonthlyPayrollCron = () => {
                 physioId: physio._id,
                 date: { $gte: startRange, $lte: endRange },
                 // Loophole Check: If your records are 'Pending', this match fails.
-                status: { $in: ["Approved", "Paid"] } 
+                status: { $in: ["Approved", "Paid"] },
               },
             },
             {
@@ -627,7 +645,7 @@ exports.initMonthlyPayrollCron = () => {
           const totalKm = petrolStats[0]?.totalKm || 0;
           const amountPerKm = physio.physioPetrolAlw || 0;
           const totalPetrolAmount = totalKm * amountPerKm;
-          
+
           // console.log(`📊 Aggregation Result (Approved Only): ${totalKm} km`);
           // console.log(`💰 Petrol Calculation: ${totalKm} * ₹${amountPerKm} = ₹${totalPetrolAmount}`);
 
@@ -643,11 +661,33 @@ exports.initMonthlyPayrollCron = () => {
               $group: {
                 _id: null,
                 completed: {
-                  $sum: { $cond: [{ $eq: ["$sessionStatusId", new mongoose.Types.ObjectId(COMPLETED_STATUS_ID)] }, 1, 0] },
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          "$sessionStatusId",
+                          new mongoose.Types.ObjectId(COMPLETED_STATUS_ID),
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
                 },
                 cancelled: {
-                  $sum: { $cond: [{ $eq: ["$sessionStatusId", new mongoose.Types.ObjectId(CANCELLED_STATUS_ID)] }, 1, 0] },
-                }
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          "$sessionStatusId",
+                          new mongoose.Types.ObjectId(CANCELLED_STATUS_ID),
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
               },
             },
           ]);
@@ -663,16 +703,23 @@ exports.initMonthlyPayrollCron = () => {
           // --- 5. SALARY CALCULATIONS ---
           const basicSalary = physio.physioSalary || 0;
           const perDaySalary = basicSalary / 30; // Fixed 30 days logic
-          const totalAmountDeducted = Math.round(perDaySalary * unpaidLeaveDays);
+          const totalAmountDeducted = Math.round(
+            perDaySalary * unpaidLeaveDays,
+          );
           const maintenance = physio.physioVehicleMTC || 0;
           const incentiveTotal = (physio.physioIncentive || 0) * completedCount;
 
-          const totalGrossSalary = basicSalary + maintenance + incentiveTotal + totalPetrolAmount;
+          const totalGrossSalary =
+            basicSalary + maintenance + incentiveTotal + totalPetrolAmount;
           const netSalary = totalGrossSalary - totalAmountDeducted;
 
           // --- 6. UPSERT PAYROLL ---
           await Payroll.findOneAndUpdate(
-            { physioId: physio._id, payrRollMonth: monthName, payrRollYear: year },
+            {
+              physioId: physio._id,
+              payrRollMonth: monthName,
+              payrRollYear: year,
+            },
             {
               payRollDate: today,
               payrRollCompletedSessions: completedCount,
@@ -690,7 +737,7 @@ exports.initMonthlyPayrollCron = () => {
               payrollCycleStart: startRange,
               payrollCycleEnd: endRange,
             },
-            { upsert: true, new: true }
+            { upsert: true, new: true },
           );
         }
         console.log(`\n✅ Payroll Debug Session Finished.`);
@@ -698,6 +745,6 @@ exports.initMonthlyPayrollCron = () => {
         console.error("❌ Payroll Cron Error:", error);
       }
     },
-    { timezone: "Asia/Kolkata" }
+    { timezone: "Asia/Kolkata" },
   );
 };
