@@ -560,35 +560,21 @@ exports.initReturnJourneyAllowanceCron = () => {
 
 exports.initMonthlyPayrollCron = () => {
   cron.schedule(
-    // "0 21 28-31 * *",
-    "34 15 * * *",
+    "44 15 * * *",
     async () => {
       try {
         const today = new Date();
-
-        const startRange = new Date(
-          today.getFullYear(),
-          today.getMonth() - 1,
-          20,
-          0,
-          0,
-          0,
-        );
-        const endRange = new Date(
-          today.getFullYear(),
-          today.getMonth(),
-          20,
-          23,
-          59,
-          59,
-        );
+        
+        const startRange = new Date(today.getFullYear(), today.getMonth() - 1, 20, 0, 0, 0);
+        const endRange = new Date(today.getFullYear(), today.getMonth(), 20, 23, 59, 59);
 
         const monthName = today.toLocaleString("default", { month: "long" });
         const year = today.getFullYear();
 
-        console.log(
-          `🚀 Starting Payroll: Cycle ${startRange.toDateString()} to ${endRange.toDateString()}`,
-        );
+        // console.log(`\n====================================================`);
+        // console.log(`🚀 PAYROLL DEBUG SESSION: ${monthName} ${year}`);
+        // console.log(`📅 Cycle: ${startRange.toISOString()} TO ${endRange.toISOString()}`);
+        // console.log(`====================================================\n`);
 
         const COMPLETED_STATUS_ID = "691ec69eae0e10763c8f21e0";
         const CANCELLED_STATUS_ID = "691ecb36b87c5c57dead47a7";
@@ -596,6 +582,56 @@ exports.initMonthlyPayrollCron = () => {
         const physios = await Physio.find({ isActive: true });
 
         for (const physio of physios) {
+          // console.log(`\n👤 PHYSIO: ${physio.physioName} [${physio._id}]`);
+
+          const rawPetrolRecords = await PetrolAllowance.find({
+            physioId: physio._id,
+            date: { $gte: startRange, $lte: endRange }
+          }).lean();
+
+          // console.log(`--- ⛽ RAW PETROL DATA CHECK ---`);
+          if (rawPetrolRecords.length === 0) {
+            // console.log(`⚠️  No Petrol records found at all for this date range.`);
+          } else {
+            let debugTotalKm = 0;
+            rawPetrolRecords.forEach((rec, index) => {
+              debugTotalKm += (rec.finalDailyKms || 0);
+              // console.log(
+              //   `[${index + 1}] Date: ${rec.date.toISOString().split('T')[0]} | ` +
+              //   `Kms: ${rec.finalDailyKms} | ` +
+              //   `Status: ${rec.status} | ` +
+              //   `Approved: ${rec.status === "Approved" || rec.status === "Paid" ? "YES" : "NO"}`
+              // );
+            });
+            // console.log(`Total Kms in DB (Regardless of Status): ${debugTotalKm} km`);
+          }
+
+          // --- 3. ACTUAL AGGREGATION (Used for Payroll) ---
+          const petrolStats = await PetrolAllowance.aggregate([
+            {
+              $match: {
+                physioId: physio._id,
+                date: { $gte: startRange, $lte: endRange },
+                // Loophole Check: If your records are 'Pending', this match fails.
+                status: { $in: ["Approved", "Paid"] } 
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                totalKm: { $sum: "$finalDailyKms" },
+              },
+            },
+          ]);
+
+          const totalKm = petrolStats[0]?.totalKm || 0;
+          const amountPerKm = physio.physioPetrolAlw || 0;
+          const totalPetrolAmount = totalKm * amountPerKm;
+          
+          // console.log(`📊 Aggregation Result (Approved Only): ${totalKm} km`);
+          // console.log(`💰 Petrol Calculation: ${totalKm} * ₹${amountPerKm} = ₹${totalPetrolAmount}`);
+
+          // --- 4. SESSIONS & LEAVES ---
           const sessionStats = await Session.aggregate([
             {
               $match: {
@@ -607,60 +643,16 @@ exports.initMonthlyPayrollCron = () => {
               $group: {
                 _id: null,
                 completed: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $eq: [
-                          "$sessionStatusId",
-                          new mongoose.Types.ObjectId(COMPLETED_STATUS_ID),
-                        ],
-                      },
-                      1,
-                      0,
-                    ],
-                  },
+                  $sum: { $cond: [{ $eq: ["$sessionStatusId", new mongoose.Types.ObjectId(COMPLETED_STATUS_ID)] }, 1, 0] },
                 },
                 cancelled: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $eq: [
-                          "$sessionStatusId",
-                          new mongoose.Types.ObjectId(CANCELLED_STATUS_ID),
-                        ],
-                      },
-                      1,
-                      0,
-                    ],
-                  },
-                },
+                  $sum: { $cond: [{ $eq: ["$sessionStatusId", new mongoose.Types.ObjectId(CANCELLED_STATUS_ID)] }, 1, 0] },
+                }
               },
             },
           ]);
 
           const completedCount = sessionStats[0]?.completed || 0;
-          const cancelledCount = sessionStats[0]?.cancelled || 0;
-
-          const petrolStats = await PetrolAllowance.aggregate([
-            {
-              $match: {
-                physioId: physio._id,
-                date: { $gte: startRange, $lte: endRange },
-                status: "Approved",
-              },
-            },
-            {
-              $group: {
-                _id: null,
-                totalKm: { $sum: "$finalDailyKms" },
-                totalAmount: { $sum: "$totalAmount" },
-              },
-            },
-          ]);
-
-          const totalKm = petrolStats[0]?.totalKm || 0;
-          const totalPetrolAmount = totalKm * (physio.physioPetrolAlw || 0);
-
           const unpaidLeaveDays = await LeaveModel.countDocuments({
             physioId: physio._id,
             LeaveDate: { $gte: startRange, $lte: endRange },
@@ -668,60 +660,44 @@ exports.initMonthlyPayrollCron = () => {
             isActive: true,
           });
 
+          // --- 5. SALARY CALCULATIONS ---
           const basicSalary = physio.physioSalary || 0;
-
-          const FIXED_DAYS_FOR_SALARY = 30;
-          const perDaySalary = basicSalary / FIXED_DAYS_FOR_SALARY;
-          const totalAmountDeducted = Math.round(
-            perDaySalary * unpaidLeaveDays,
-          );
-
+          const perDaySalary = basicSalary / 30; // Fixed 30 days logic
+          const totalAmountDeducted = Math.round(perDaySalary * unpaidLeaveDays);
           const maintenance = physio.physioVehicleMTC || 0;
           const incentiveTotal = (physio.physioIncentive || 0) * completedCount;
 
-          const ESI = 0;
-          const PF = 0;
+          const totalGrossSalary = basicSalary + maintenance + incentiveTotal + totalPetrolAmount;
+          const netSalary = totalGrossSalary - totalAmountDeducted;
 
-          const totalGrossSalary =
-            basicSalary + maintenance + incentiveTotal + totalPetrolAmount;
-          const netSalary = totalGrossSalary - totalAmountDeducted - ESI - PF;
-
+          // --- 6. UPSERT PAYROLL ---
           await Payroll.findOneAndUpdate(
-            {
-              physioId: physio._id,
-              payrRollMonth: monthName,
-              payrRollYear: year,
-            },
+            { physioId: physio._id, payrRollMonth: monthName, payrRollYear: year },
             {
               payRollDate: today,
               payrRollCompletedSessions: completedCount,
-              payrRollCancelledSession: cancelledCount,
+              payrRollCancelledSession: sessionStats[0]?.cancelled || 0,
               PetrolKm: totalKm,
-              PetrolAmount: totalPetrolAmount,
+              PetrolAmount: Math.round(totalPetrolAmount),
               basicSalary: basicSalary,
               vehicleMaintanance: maintenance,
-              ESI: Math.round(ESI),
-              PF: Math.round(PF),
               Incentive: incentiveTotal,
-              amountperKm: physio.physioPetrolAlw,
+              amountperKm: amountPerKm,
               NoofLeave: unpaidLeaveDays,
               TotalAmountDeducted: totalAmountDeducted,
               TotalSalary: Math.round(totalGrossSalary),
               NetSalary: Math.round(netSalary),
+              payrollCycleStart: startRange,
+              payrollCycleEnd: endRange,
             },
-            { upsert: true, new: true },
-          );
-
-          console.log(
-            `✅ Payroll generated: ${physio.physioName} | Deduction: ₹${totalAmountDeducted} (for ${unpaidLeaveDays} days)`,
+            { upsert: true, new: true }
           );
         }
-
-        console.log(`🏁 Payroll Cycle Generation (${monthName}) completed.`);
+        console.log(`\n✅ Payroll Debug Session Finished.`);
       } catch (error) {
         console.error("❌ Payroll Cron Error:", error);
       }
     },
-    { timezone: "Asia/Kolkata" },
+    { timezone: "Asia/Kolkata" }
   );
 };
