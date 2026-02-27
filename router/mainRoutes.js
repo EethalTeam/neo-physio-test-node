@@ -152,6 +152,10 @@ router.post(
   "/PetrolAllowance/getAllPetrolAllowance",
   PetrolAllowanceControllers.getAllPetrol,
 );
+router.post(
+  "/PetrolAllowance/updateManualKms",
+  PetrolAllowanceControllers.updateManualKms,
+);
 //DashBoardControllers
 router.post("/DashBoard/getAllDashBoard", DashBoardControllers.getAllDashBoard);
 router.post("/DashBoard/monthlyfunnel", DashBoardControllers.monthlyfunnel);

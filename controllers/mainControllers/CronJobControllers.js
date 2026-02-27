@@ -560,35 +560,24 @@ exports.initReturnJourneyAllowanceCron = () => {
 
 exports.initMonthlyPayrollCron = () => {
   cron.schedule(
-    "31 11 * * *",
+    // "0 21 28-31 * *",
+    "33 14 * * *",
     async () => {
       try {
         const today = new Date();
-        const lastDayOfMonthDate = new Date(
+
+        const startRange = new Date(
           today.getFullYear(),
-          today.getMonth() + 1,
+          today.getMonth() - 1,
+          20,
+          0,
+          0,
           0,
         );
-        const daysInMonth = lastDayOfMonthDate.getDate();
-
-        // if (today.getDate() !== daysInMonth) return;
-
-        console.log(
-          `🚀 Starting Payroll Generation for ${daysInMonth} days month...`,
-        );
-
-        const startOfMonth = new Date(
+        const endRange = new Date(
           today.getFullYear(),
           today.getMonth(),
-          1,
-          0,
-          0,
-          0,
-        );
-        const endOfMonth = new Date(
-          today.getFullYear(),
-          today.getMonth(),
-          daysInMonth,
+          20,
           23,
           59,
           59,
@@ -596,6 +585,10 @@ exports.initMonthlyPayrollCron = () => {
 
         const monthName = today.toLocaleString("default", { month: "long" });
         const year = today.getFullYear();
+
+        console.log(
+          `🚀 Starting Payroll: Cycle ${startRange.toDateString()} to ${endRange.toDateString()}`,
+        );
 
         const COMPLETED_STATUS_ID = "691ec69eae0e10763c8f21e0";
         const CANCELLED_STATUS_ID = "691ecb36b87c5c57dead47a7";
@@ -607,7 +600,7 @@ exports.initMonthlyPayrollCron = () => {
             {
               $match: {
                 physioId: physio._id,
-                sessionDate: { $gte: startOfMonth, $lte: endOfMonth },
+                sessionDate: { $gte: startRange, $lte: endRange },
               },
             },
             {
@@ -652,7 +645,7 @@ exports.initMonthlyPayrollCron = () => {
             {
               $match: {
                 physioId: physio._id,
-                date: { $gte: startOfMonth, $lte: endOfMonth },
+                date: { $gte: startRange, $lte: endRange },
                 status: "Approved",
               },
             },
@@ -666,28 +659,26 @@ exports.initMonthlyPayrollCron = () => {
           ]);
 
           const totalKm = petrolStats[0]?.totalKm || 0;
-          const totalPetrolAmount = petrolStats[0]?.totalAmount || 0;
+          const totalPetrolAmount = totalKm * (physio.physioPetrolAlw || 0);
 
           const unpaidLeaveDays = await LeaveModel.countDocuments({
             physioId: physio._id,
-            LeaveDate: { $gte: startOfMonth, $lte: endOfMonth },
+            LeaveDate: { $gte: startRange, $lte: endRange },
             PaidLeave: false,
             isActive: true,
           });
 
           const basicSalary = physio.physioSalary || 0;
 
-          // Calculation: (30000 / 30) * 3
           const FIXED_DAYS_FOR_SALARY = 30;
           const perDaySalary = basicSalary / FIXED_DAYS_FOR_SALARY;
           const totalAmountDeducted = Math.round(
             perDaySalary * unpaidLeaveDays,
           );
-          // --- 4. FINAL SALARY CALCULATION ---
+
           const maintenance = physio.physioVehicleMTC || 0;
           const incentiveTotal = (physio.physioIncentive || 0) * completedCount;
 
-          // Optional: Statutory deductions (ESI/PF)
           const ESI = 0;
           const PF = 0;
 
@@ -695,7 +686,6 @@ exports.initMonthlyPayrollCron = () => {
             basicSalary + maintenance + incentiveTotal + totalPetrolAmount;
           const netSalary = totalGrossSalary - totalAmountDeducted - ESI - PF;
 
-          // 5. Save or Update Payroll
           await Payroll.findOneAndUpdate(
             {
               physioId: physio._id,
@@ -723,19 +713,15 @@ exports.initMonthlyPayrollCron = () => {
           );
 
           console.log(
-            `✅ Payroll created for ${physio.physioName}: Leaves: ${unpaidLeaveDays}, Deduction: ₹${totalAmountDeducted}`,
+            `✅ Payroll generated: ${physio.physioName} | Deduction: ₹${totalAmountDeducted} (for ${unpaidLeaveDays} days)`,
           );
         }
 
-        console.log(
-          `🏁 Monthly Payroll Generation for ${monthName} completed.`,
-        );
+        console.log(`🏁 Payroll Cycle Generation (${monthName}) completed.`);
       } catch (error) {
         console.error("❌ Payroll Cron Error:", error);
       }
     },
-    {
-      timezone: "Asia/Kolkata",
-    },
+    { timezone: "Asia/Kolkata" },
   );
 };
