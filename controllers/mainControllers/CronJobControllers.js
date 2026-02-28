@@ -305,7 +305,7 @@ exports.initMonthlyBillingGeneration = (io) => {
 
 exports.initDailySessionGeneration = () => {
   cron.schedule(
-    "0 5 * * 1-6",
+    "00 5 * * 1-6",
     async () => {
       try {
         console.log("🚀 Starting Daily Session Generation (5 AM IST)...");
@@ -318,7 +318,7 @@ exports.initDailySessionGeneration = () => {
           isRecovered: false,
           sessionStartDate: { $lte: end },
         }).sort({ visitOrder: 1 });
-
+        console.log(activePatients, "activePatients");
         for (const patient of activePatients) {
           // 2. Check if session already exists for today
           const exists = await Session.findOne({
@@ -327,7 +327,7 @@ exports.initDailySessionGeneration = () => {
           });
 
           if (exists) continue;
-
+          console.log(exists, "exists");
           // --- LEAVE & REASSIGNMENT LOGIC START ---
           let finalPhysioId = patient.physioId;
           let finalSessionTime = patient.sessionTime;
@@ -562,9 +562,9 @@ exports.initReturnJourneyAllowanceCron = () => {
 
 exports.initMonthlyPayrollCron = () => {
   cron.schedule(
-    "30 9 28-31 * *",
+    // "30 9 28-31 * *",
 
-    // "44 15 * * *",
+    "23 18 * * *",
     async () => {
       try {
         const today = new Date();
