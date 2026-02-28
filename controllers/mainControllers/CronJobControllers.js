@@ -166,8 +166,8 @@ exports.initSessionCron = (io) => {
 
 exports.initMonthlyBillingGeneration = () => {
   cron.schedule(
-    "10 20 * * *",
-    // "0 8 28-31 * *",
+    // "10 20 * * *",
+    "0 8 28-31 * *",
 
     async () => {
       console.log("🔔 Monthly Billing Cron Triggered...");
@@ -580,8 +580,8 @@ exports.initReturnJourneyAllowanceCron = () => {
 
 exports.initMonthlyPayrollCron = () => {
   cron.schedule(
-    // "30 9 28-31 * *",
-    "14 20 * * *",
+    "30 9 28-31 * *",
+    // "14 20 * * *",
     async () => {
       try {
         const today = new Date();
