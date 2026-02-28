@@ -164,10 +164,10 @@ exports.initSessionCron = (io) => {
   );
 };
 
-exports.initMonthlyBillingGeneration = (io) => {
+exports.initMonthlyBillingGeneration = () => {
   cron.schedule(
-    // "31 12 26 2 *",
-    "0 8 28-31 * *",
+    "10 20 * * *",
+    // "0 8 28-31 * *",
 
     async () => {
       console.log("🔔 Monthly Billing Cron Triggered...");
@@ -268,9 +268,20 @@ exports.initMonthlyBillingGeneration = (io) => {
           // }
 
           // --- CREATE THE BILL ---
+          if (!item.physioId) {
+            console.log(
+              `⚠️ Skipping bill: patient ${item._id} has no physioId in sessions`,
+            );
+            continue;
+          }
+          if (!patient.physioId) {
+            console.log(
+              `⚠️ Patient ${patient.patientName} has no patient.physioId, using item.physioId`,
+            );
+          }
           await Bill.create({
             patientId: item._id,
-            physioId: patient.physioId,
+            physioId: item.physioId,
             paymentStatus: paymentStatus,
             ReceivedAmount: deductedFromAdvance, // Amount "received" via advance
             TotalBilledAmount: totalBilledAmount,
@@ -485,6 +496,7 @@ exports.initScheduledReviewGeneration = () => {
 exports.initReturnJourneyAllowanceCron = () => {
   cron.schedule(
     "30 19 * * *",
+    // "14 19 * * *",
     async () => {
       try {
         console.log(
@@ -536,9 +548,15 @@ exports.initReturnJourneyAllowanceCron = () => {
             await PetrolAllowance.findOneAndUpdate(
               { physioId, date: allowanceDate },
               {
-                $inc: {
+                $set: {
                   completedKms: totalReturnKms,
                   finalDailyKms: totalReturnKms,
+                  status: "Pending", // optional
+                },
+                $setOnInsert: {
+                  physioId,
+                  date: allowanceDate,
+                  createdAt: new Date(),
                 },
               },
               { new: true, upsert: true },
@@ -563,8 +581,7 @@ exports.initReturnJourneyAllowanceCron = () => {
 exports.initMonthlyPayrollCron = () => {
   cron.schedule(
     // "30 9 28-31 * *",
-
-    "23 18 * * *",
+    "14 20 * * *",
     async () => {
       try {
         const today = new Date();

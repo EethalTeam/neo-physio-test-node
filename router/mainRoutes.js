@@ -48,6 +48,11 @@ router.post("/Bill/createBill", BillCountrollers.createBill);
 router.post("/Bill/receivePayment", BillCountrollers.receivePayment);
 router.post("/Bill/getAllBill", BillCountrollers.getAllBill);
 router.post("/Bill/deleteBill", BillCountrollers.deleteBill);
+router.post(
+  "/Bill/resetIsBilled",
+  BillCountrollers.deleteAllBillsAndResetSessions,
+);
+router.post("/Leave/resetLeaveModule", LeaveControllers.resetLeaveModule);
 //Physio
 router.post(
   "/Physio/createPhysio",
@@ -156,7 +161,10 @@ router.post(
   "/PetrolAllowance/updateManualKms",
   PetrolAllowanceControllers.updateManualKms,
 );
-router.post("/PetrolAllowance/ApprovePetrolAllowance", PetrolAllowanceControllers.ApprovePetrol);
+router.post(
+  "/PetrolAllowance/ApprovePetrolAllowance",
+  PetrolAllowanceControllers.ApprovePetrol,
+);
 //DashBoardControllers
 router.post("/DashBoard/getAllDashBoard", DashBoardControllers.getAllDashBoard);
 router.post("/DashBoard/monthlyfunnel", DashBoardControllers.monthlyfunnel);

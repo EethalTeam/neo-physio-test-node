@@ -158,3 +158,20 @@ exports.updateLeavePaidStatus = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+exports.resetLeaveModule = async (req, res) => {
+  try {
+    // 1) delete all leave records
+    const del = await LeaveModel.deleteMany({});
+
+    // 2) nothing to "reset" after delete, but we return a clear response
+    // New leaves will use schema default (PaidLeave:false) automatically
+    return res.status(200).json({
+      success: true,
+      message:
+        "All leave data deleted. PaidLeave will be false for newly created leaves.",
+      deletedCount: del.deletedCount,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};

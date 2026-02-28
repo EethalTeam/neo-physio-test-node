@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Bill = require("../../model/masterModels/Bill");
 const Credit = require("../../model/masterModels/CreditPayment");
+const Session = require("../../model/masterModels/Session");
 // Create a new Patient
 exports.createBill = async (req, res) => {
   try {
@@ -163,5 +164,29 @@ exports.deleteBill = async (req, res) => {
     res.status(200).json({ message: "Bill deleted successfully" });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+exports.deleteAllBillsAndResetSessions = async (req, res) => {
+  try {
+    // 1) delete all bills
+    const billResult = await Bill.deleteMany({});
+
+    // 2) reset sessions billed flag (only completed sessions)
+    const completedStatusId = new mongoose.Types.ObjectId(
+      "691ec69eae0e10763c8f21e0",
+    );
+
+    const sessionResult = await Session.updateMany(
+      { sessionStatusId: completedStatusId, isBilled: true },
+      { $set: { isBilled: false } },
+    );
+
+    return res.status(200).json({
+      message: "All bills deleted and sessions reset",
+      billsDeleted: billResult.deletedCount,
+      sessionsReset: sessionResult.modifiedCount,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
   }
 };
