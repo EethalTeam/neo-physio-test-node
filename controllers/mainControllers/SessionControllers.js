@@ -46,10 +46,8 @@ exports.createSession = async (req, res) => {
       patientId: patientId,
       sessionStatusId: completedStatusId,
     }).session(mongooseSession);
-
     for (const dateStr of sessionDates) {
       const currentDate = new Date(dateStr);
-      console.log(currentDate, "currentDate");
       if (currentDate.getDay() === 0) {
         skippedDates.push({ date: dateStr, reason: "Sunday is not allowed" });
         continue;
@@ -59,14 +57,12 @@ exports.createSession = async (req, res) => {
       // const endOfDay = new Date(
       //   new Date(currentDate).setHours(23, 59, 59, 999),
       // );
-      const startOfDayIST = new Date(`${dateStr}T00:00:00+05:30`);
-      const endOfDayIST = new Date(`${dateStr}T23:59:59.999+05:30`);
-
+      const startOfDayIST = new Date(`${dateStr}T00:00:00.000Z`);
+      const endOfDayIST = new Date(`${dateStr}T23:59:59.999Z`);
       const existingSession = await Session.findOne({
         patientId,
         sessionDate: { $gte: startOfDayIST, $lte: endOfDayIST },
       }).session(mongooseSession);
-      console.log(existingSession, "existingSession");
       if (existingSession) {
         skippedDates.push({
           date: dateStr,
@@ -84,7 +80,6 @@ exports.createSession = async (req, res) => {
       const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
       const currentSessionCount =
         baseCompletedCount + (createdSessions.length + 1);
-
       const newSession = new Session({
         sessionCode: formattedCode,
         patientId,
