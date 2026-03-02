@@ -263,12 +263,20 @@ exports.updateReview = async (req, res) => {
         const superAdminRoleId = await RoleBased.findOne({
           RoleName: "SuperAdmin",
         });
+        const PhysioRoleId = await RoleBased.findOne({
+          RoleName: "Physio",
+        });
         if (!superAdminRoleId) {
           res.status(400).json({ message: "SuperAdmin role not found" });
         }
+        if (!PhysioRoleId) {
+          res.status(400).json({ message: "Physio role not found" });
+        }
 
         const admins = await Employee.find({
-          roleId: { $in: [superAdminRoleId._id, adminRoleId._id] },
+          roleId: {
+            $in: [superAdminRoleId._id, adminRoleId._id, PhysioRoleId._id],
+          },
         });
         const patient = await Patient.findById(patientId);
         const patientName = patient ? patient.patientName : "the patient";

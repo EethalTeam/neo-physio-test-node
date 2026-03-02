@@ -38,6 +38,7 @@ const notificationSchema = new mongoose.Schema(
         "Pending-Review",
         "Review-Completed",
         "general",
+        "Petrol-Allowance",
         "other",
       ],
       default: "general",
@@ -52,6 +53,7 @@ const notificationSchema = new mongoose.Schema(
       PhysioId: { type: mongoose.Schema.Types.ObjectId, ref: "Physio" },
       PatientId: { type: mongoose.Schema.Types.ObjectId, ref: "Patient" },
       ReviewId: { type: mongoose.Schema.Types.ObjectId, ref: "Review" },
+      Date: { type: Date },
       ConsultationId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Consultation",

@@ -166,7 +166,7 @@ exports.initSessionCron = (io) => {
 
 exports.initMonthlyBillingGeneration = () => {
   cron.schedule(
-    // "10 20 * * *",
+    // "26 11 * * *",
     "0 8 28-31 * *",
 
     async () => {
@@ -316,7 +316,7 @@ exports.initMonthlyBillingGeneration = () => {
 
 exports.initDailySessionGeneration = () => {
   cron.schedule(
-    "00 5 * * 1-6",
+    "00 16 * * 1-6",
     async () => {
       try {
         console.log("🚀 Starting Daily Session Generation (5 AM IST)...");
@@ -338,7 +338,7 @@ exports.initDailySessionGeneration = () => {
           });
 
           if (exists) continue;
-          console.log(exists, "exists");
+          // console.log(exists, "exists");
           // --- LEAVE & REASSIGNMENT LOGIC START ---
           let finalPhysioId = patient.physioId;
           let finalSessionTime = patient.sessionTime;
@@ -580,8 +580,8 @@ exports.initReturnJourneyAllowanceCron = () => {
 
 exports.initMonthlyPayrollCron = () => {
   cron.schedule(
-    "30 9 28-31 * *",
-    // "14 20 * * *",
+    // "30 9 28-31 * *",
+    "10 15 * * *",
     async () => {
       try {
         const today = new Date();

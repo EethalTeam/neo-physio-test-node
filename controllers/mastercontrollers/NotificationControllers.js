@@ -1,15 +1,19 @@
 // const Notification = require("../../models/masterModels/Notification");
-const Notification = require("../../model/masterModels/Notification")
+const Notification = require("../../model/masterModels/Notification");
 // const Group = require("../../models/masterModels/Group"); // Your group schema
 // const LeaveRequest = require("../../models/masterModels/LeaveRequest");
 // const PermissionRequest = require("../../models/masterModels/Permissions");
 // const Task = require('../../models/masterModels/Task')
-const mongoose = require('mongoose');
-
+const mongoose = require("mongoose");
+const Session = require("../../model/masterModels/Session");
+const Patient = require("../../model/masterModels/Patient");
+const PetrolAllowance = require("../../model/masterModels/PetrolAllowance");
+const SessionStatus = require("../../model/masterModels/SessionStatus");
 // Create a notification
 exports.createNotification = async (req, res) => {
   try {
-    const { unitId, message, type, fromEmployeeId, toEmployeeId, meta } = req.body;
+    const { unitId, message, type, fromEmployeeId, toEmployeeId, meta } =
+      req.body;
 
     if (!unitId || !message || !type || !fromEmployeeId) {
       return res.status(400).json({
@@ -40,8 +44,11 @@ exports.createNotification = async (req, res) => {
     const io = req.app.get("socketio"); // access Socket.IO instance
     if (io) {
       if (toEmployeeId) {
-        io.to(toEmployeeId.toString()).emit("receiveNotification", notification);
-      } 
+        io.to(toEmployeeId.toString()).emit(
+          "receiveNotification",
+          notification,
+        );
+      }
       // else if (groupId) {
       //   const group = await Group.findById(groupId).populate("members", "_id");
       //   group.members.forEach(member => {
@@ -106,7 +113,7 @@ exports.markAsSeen = async (req, res) => {
     const notification = await Notification.findByIdAndUpdate(
       notificationId,
       { status: "seen" },
-      { new: true }
+      { new: true },
     );
 
     if (!notification) {
@@ -128,80 +135,154 @@ exports.markAsSeen = async (req, res) => {
 
 exports.updateNotificationStatus = async (req, res) => {
   try {
-    const { notificationId, action } = req.body;
-    const io = req.app.get("socketio"); //  get socket instance
-    if (!notificationId || !action) {
-      return res.status(400).json({ message: "notificationId and action are required." });
-    }
+    const { notificationId, action, physioId, patientId, date } = req.body;
+    const io = req.app.get("socketio");
 
-    const STATUS = {
-      approved: "68b6a2610c502941d03c6372",
-      rejected: "68b6a2680c502941d03c6376",
-      complete: "68b5a26d88e62ec178bb292b"
-    };
+    if (!notificationId || !action) {
+      return res
+        .status(400)
+        .json({ message: "notificationId and action are required." });
+    }
 
     const newStatus = action === "approve" ? "approved" : "rejected";
 
-    // Update notification status
     const notification = await Notification.findByIdAndUpdate(
       notificationId,
       { status: newStatus },
-      { new: true }
+      { new: true },
     );
 
     if (!notification) {
       return res.status(404).json({ message: "Notification not found." });
     }
 
-    //  If notification is for Leave Request
-    // if (notification.type === "leave-request" && notification.meta?.leaveRequestId) {
-    //   await LeaveRequest.findByIdAndUpdate(
-    //     notification.meta.leaveRequestId,
-    //     { RequestStatusId: STATUS[newStatus] },
-    //     { new: true }
-    //   );
-    // }
+    // ✅ Run petrol allowance logic only on approve
+    if (action === "approve") {
+      const meta = notification.meta || {};
+      const SessionId = meta.SessionId;
 
-    // If notification is for Permission Request
-    // if (notification.type === "permission-request" && notification.meta?.permissionRequestId) {
-    //   await PermissionRequest.findByIdAndUpdate(
-    //     notification.meta.permissionRequestId,
-    //     { RequestStatusId: STATUS[newStatus] },
-    //     { new: true }
-    //   );
-    // }
+      if (!SessionId) {
+        return res.status(400).json({ message: "SessionId missing in meta" });
+      }
 
-        // If notification is for Permission Request
-    // if (notification.type === "task-complete" && notification.meta?.taskId) {
-    //   await Task.findByIdAndUpdate(
-    //     notification.meta.taskId,
-    //     { taskStatusId: STATUS['complete'] },
-    //     { new: true }
-    //   );
-    // }
+      const cancelledSession =
+        await Session.findById(SessionId).populate("patientId");
+      if (!cancelledSession) {
+        return res.status(404).json({ message: "Session not found" });
+      }
 
+      // ✅ Use session flag (source of truth)
+      const petrolAllowanceClaimed = !!cancelledSession.petrolAllowanceClaimed;
+
+      const allowanceDate = new Date(cancelledSession.sessionDate);
+      allowanceDate.setHours(12, 0, 0, 0);
+
+      // Always upsert doc + set claimed flag
+      await PetrolAllowance.findOneAndUpdate(
+        { physioId: cancelledSession.physioId, date: allowanceDate },
+        { $set: { petrolAllowanceClaimed } },
+        { new: true, upsert: true },
+      );
+
+      // Only if claimed, add kms
+      if (petrolAllowanceClaimed) {
+        // 1) Prefer cancelled km if available
+        let kmToAdd = Number(cancelledSession.cancelledKms || 0);
+
+        // 2) Else fallback: compute previous session km (your existing logic)
+        if (!Number.isFinite(kmToAdd) || kmToAdd <= 0) {
+          const dayStart = new Date(cancelledSession.sessionDate);
+          dayStart.setHours(0, 0, 0, 0);
+
+          const dayEnd = new Date(cancelledSession.sessionDate);
+          dayEnd.setHours(23, 59, 59, 999);
+
+          const completedSessionStatus = await SessionStatus.find({
+            sessionStatusName: { $in: ["Completed", "Attended"] },
+          }).select("_id");
+
+          const statusIds = completedSessionStatus.map((s) => s._id);
+
+          const firstCompleteSession = await Session.findOne({
+            physioId: cancelledSession.physioId,
+            sessionDate: { $gte: dayStart, $lte: dayEnd },
+            sessionStatusId: { $in: statusIds },
+          })
+            .sort({ sessionToTime: 1 })
+            .populate("patientId");
+
+          if (firstCompleteSession?.patientId) {
+            kmToAdd = Number(firstCompleteSession.patientId.KmsfromHub || 0);
+          } else {
+            const patientDocId =
+              cancelledSession.patientId?._id || cancelledSession.patientId;
+
+            const patientData = await Patient.findById(patientDocId);
+            if (patientData) {
+              kmToAdd =
+                patientData.visitOrder == 1
+                  ? Number(patientData.KmsfromHub || 0)
+                  : Number(patientData.kmsFromPrevious || 0);
+            }
+          }
+        }
+
+        // Safety: if still 0, don't update kms
+        if (!Number.isFinite(kmToAdd) || kmToAdd <= 0) {
+          return res.status(400).json({
+            message:
+              "Unable to calculate KM (cancelledKms and fallback KM both are 0).",
+          });
+        }
+
+        // ✅ Decide which field to increment
+        // If cancelledKms was used => increment canceledKms
+        // Else (fallback used) => increment completedKms
+        const usedCancelledKm = Number(cancelledSession.cancelledKms || 0) > 0;
+
+        await PetrolAllowance.findOneAndUpdate(
+          { physioId: cancelledSession.physioId, date: allowanceDate },
+          {
+            $inc: {
+              ...(usedCancelledKm
+                ? { canceledKms: kmToAdd }
+                : { completedKms: kmToAdd }),
+              finalDailyKms: kmToAdd,
+            },
+          },
+          { new: true, upsert: true },
+        );
+      }
+    }
+
+    // ✅ Create response notification back to requester
     const Newnotification = new Notification({
-      message:`Your ${notification.type} has been ${newStatus}`,
+      message: `Your ${notification.type} has been ${newStatus}`,
       type: "general",
-      fromEmployeeId:notification.toEmployeeId,
+      fromEmployeeId: notification.toEmployeeId,
       toEmployeeId: notification.fromEmployeeId || null,
-      groupId:null,
       status: "unseen",
-      meta: {},
+      meta: { patientId, physioId, date },
     });
 
     await Newnotification.save();
-  io.to(notification.fromEmployeeId.toString()).emit("receiveNotification", Newnotification);
-    res.status(200).json({
-      message: `Notification and related request updated to ${newStatus}`,
+
+    if (io && notification.fromEmployeeId) {
+      io.to(notification.fromEmployeeId.toString()).emit(
+        "receiveNotification",
+        Newnotification,
+      );
+    }
+
+    return res.status(200).json({
+      message: `Notification updated to ${newStatus}`,
       data: notification,
     });
   } catch (error) {
     console.error("Error updating notification:", error.message);
-    res.status(500).json({
+    return res.status(500).json({
       message: "Failed to update notification.",
       error: error.message,
     });
   }
 };
-
