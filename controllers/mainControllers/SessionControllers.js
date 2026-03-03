@@ -726,7 +726,6 @@ exports.SessionCancel = async (req, res) => {
     }
   }
 };
-
 exports.SessionEnd = async (req, res) => {
   const mongooseSession = await mongoose.startSession();
   mongooseSession.startTransaction();
@@ -745,7 +744,7 @@ exports.SessionEnd = async (req, res) => {
       action,
     } = req.body;
 
-    // 1. Prepare Session Update Object
+    // 1) Prepare Session Update Object
     let sessionUpdateData = {
       sessionFeedbackPros,
       redFlags,
@@ -757,54 +756,52 @@ exports.SessionEnd = async (req, res) => {
     };
     if (machineId) sessionUpdateData.machineId = machineId;
 
-    // 2. Resolve Status
+    // 2) Resolve Status
     const Status = await SessionStatus.findOne({
       sessionStatusName: action,
     }).session(mongooseSession);
+
     if (!Status) throw new Error("Session Status is not found");
     sessionUpdateData.sessionStatusId = Status._id;
 
-    // 3. Update Session
+    // 3) Update Session
     const session = await Session.findByIdAndUpdate(
       _id,
       { $set: sessionUpdateData },
       { new: true, runValidators: true, session: mongooseSession },
     );
+
     if (!session) throw new Error("Session not found");
 
-    // 4. Fetch Patient and FeesType
+    // 4) Fetch Patient and FeesType
     const patient = await Patient.findById(session.patientId)
       .populate("FeesTypeId")
       .session(mongooseSession);
+
     if (!patient) throw new Error("Patient not found");
 
-    // --- START: PER MONTH BILLING LOGIC (TRIGGER AT SESSION 26) ---
+    // ------------------------------
+    // 5) PER MONTH BILLING (AT SESSION 26)
+    // ------------------------------
     if (
       patient.FeesTypeId?.feesTypeName === "PerMonth" &&
-      session.sessionCount === 26
+      Number(session.sessionCount) === 26
     ) {
       const today = new Date();
-      const currentMonth = today.getMonth() + 1; // Converts 0-11 to 1-12
+      const currentMonth = today.getMonth() + 1; // 1-12
       const currentYear = today.getFullYear();
 
-      console.log(
-        `--- 🔍 DEBUG: Billing Calculation for ${patient.patientName} ---`,
-      );
-      console.log(`📅 Target Month: ${currentMonth} | Year: ${currentYear}`);
+      const totalBilledAmount = Number(patient.feeAmount || 0);
 
-      const totalBilledAmount = patient.feeAmount || 0;
-      console.log(
-        `💰 Base Monthly Fee (from Patient Schema): ₹${totalBilledAmount}`,
-      );
+      // debitDoc (old logic)
       const debitDoc = await Debit.findOne({
         patientId: patient._id,
         DebitAmount: { $gt: 0 },
       })
         .sort({ DebitDate: 1 })
         .session(mongooseSession);
-      const availableAdvance = Number(debitDoc?.DebitAmount || 0);
 
-      // Loophole Check: Verify if DebitMonth/Year matches the aggregation filter
+      // monthly aggregation (your current logic)
       const monthlyAdvanceRecord = await Debit.aggregate([
         {
           $match: {
@@ -816,40 +813,31 @@ exports.SessionEnd = async (req, res) => {
         { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
       ]).session(mongooseSession);
 
-      console.log(`📦 Aggregation Result for Debit:`, monthlyAdvanceRecord);
-
       const availableMonthlyAdvance =
-        monthlyAdvanceRecord.length > 0 ? monthlyAdvanceRecord[0].total : 0;
-      console.log(
-        `💵 Calculated Available Advance: ₹${availableMonthlyAdvance}`,
-      );
+        monthlyAdvanceRecord.length > 0
+          ? Number(monthlyAdvanceRecord[0].total)
+          : 0;
 
-      // Logic for deduction
-      let deductedFromAdvance = Math.min(
+      const deductedFromAdvance = Math.min(
         availableMonthlyAdvance,
         totalBilledAmount,
       );
-      let netBilledAmount = totalBilledAmount - deductedFromAdvance;
-
-      console.log(
-        `⚖️  Calculation: ₹${totalBilledAmount} (Billed) - ₹${deductedFromAdvance} (Deducted) = ₹${netBilledAmount} (Net)`,
-      );
+      const netBilledAmount = totalBilledAmount - deductedFromAdvance;
 
       let paymentStatus = "Pending";
-      if (netBilledAmount === 0 && totalBilledAmount > 0) {
+      if (netBilledAmount === 0 && totalBilledAmount > 0)
         paymentStatus = "Paid";
-      } else if (deductedFromAdvance > 0) {
-        paymentStatus = "Partially Paid";
-      } // ✅ Consume debit (reduce balance) inside same transaction
+      else if (deductedFromAdvance > 0) paymentStatus = "Partially Paid";
+
+      // ✅ Consume debit inside same transaction (if you want to reduce only ONE debit doc)
       if (debitDoc && deductedFromAdvance > 0) {
         debitDoc.DebitAmount = Number(
           (Number(debitDoc.DebitAmount || 0) - deductedFromAdvance).toFixed(2),
         );
-        debitDoc.DebitDate = new Date(); // optional
+        debitDoc.DebitDate = new Date();
         await debitDoc.save({ session: mongooseSession });
       }
 
-      // Create the Bill record
       const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
       const endOfToday = new Date(
         today.getFullYear(),
@@ -866,8 +854,7 @@ exports.SessionEnd = async (req, res) => {
             patientId: patient._id,
             physioId: session.physioId,
             paymentType: "Partial Payment",
-            paymentStatus: paymentStatus,
-            // ReceivedAmount: deductedFromAdvance,
+            paymentStatus,
             TotalBilledAmount: totalBilledAmount,
             DeductedFromAdvance: deductedFromAdvance,
             NetBilledAmount: netBilledAmount,
@@ -881,7 +868,6 @@ exports.SessionEnd = async (req, res) => {
         { session: mongooseSession },
       );
 
-      // Mark sessions of this month as billed
       await Session.updateMany(
         {
           patientId: patient._id,
@@ -892,9 +878,6 @@ exports.SessionEnd = async (req, res) => {
         { session: mongooseSession },
       );
 
-      console.log(`✅ Bill generated successfully for ${patient.patientName}`);
-      console.log(`--- 🔍 DEBUG END ---`);
-
       await triggerRoleNotifications(
         req,
         session,
@@ -902,10 +885,11 @@ exports.SessionEnd = async (req, res) => {
         "Monthly-Bill-Alert",
       );
     }
-    // --- END: PER MONTH BILLING LOGIC ---
 
-    // 5. Red Flags & Review Logic
-    if (redFlags && redFlags.length > 0) {
+    // ------------------------------
+    // 6) Red Flags & Review Logic
+    // ------------------------------
+    if (redFlags && Array.isArray(redFlags) && redFlags.length > 0) {
       const formattedRedFlags = redFlags.map((r) => ({
         redFlagId: new mongoose.Types.ObjectId(r.redFlagId?._id || r.redFlagId),
       }));
@@ -913,6 +897,7 @@ exports.SessionEnd = async (req, res) => {
       const reviewTypeDefault = await ReviewType.findOne({
         reviewTypeName: "RedFlags",
       }).session(mongooseSession);
+
       const reviewStatusDefault = await ReviewStatus.findOne({
         reviewStatusName: "Pending",
       }).session(mongooseSession);
@@ -943,52 +928,134 @@ exports.SessionEnd = async (req, res) => {
       }
     }
 
-    // 6. Petrol Allowance Logic
-    let kmsToAdd =
-      patient.visitOrder === 1
-        ? patient.KmsfromHub || 0
-        : patient.kmsFromPrevious || 0;
+    // ------------------------------
+    // 7) Petrol Allowance Logic (Daily + Patient Summary)
+    // ------------------------------
+    const kmsToAdd =
+      Number(patient.visitOrder) === 1
+        ? Number(patient.KmsfromHub || 0)
+        : Number(patient.kmsFromPrevious || 0);
+
     const allowanceDate = new Date(session.sessionDate);
     allowanceDate.setHours(12, 0, 0, 0);
 
+    // Step A: Upsert day doc first (safe)
     await PetrolAllowance.findOneAndUpdate(
       { physioId: session.physioId, date: allowanceDate },
-      { $inc: { completedKms: kmsToAdd, finalDailyKms: kmsToAdd } },
+      {
+        $setOnInsert: {
+          physioId: session.physioId,
+          date: allowanceDate,
+          completedKms: 0,
+          canceledKms: 0,
+          manualKms: 0,
+          finalDailyKms: 0,
+          amountPerKm: 0,
+          totalAmount: 0,
+          status: "Pending",
+        },
+      },
       { new: true, upsert: true, session: mongooseSession },
     );
 
+    // Step B: Add totals
+    await PetrolAllowance.findOneAndUpdate(
+      { physioId: session.physioId, date: allowanceDate },
+      { $inc: { completedKms: kmsToAdd, finalDailyKms: kmsToAdd } },
+      { new: true, session: mongooseSession },
+    );
+
+    // Step C: Update patient row if exists
+    const updated = await PetrolAllowance.findOneAndUpdate(
+      {
+        physioId: session.physioId,
+        date: allowanceDate,
+        "summary.patientId": session.patientId,
+      },
+      {
+        $inc: { "summary.$.travelKm": kmsToAdd },
+        $set: {
+          "summary.$.type": "Completed",
+          "summary.$.sessionId": session._id,
+        },
+      },
+      { new: true, session: mongooseSession },
+    );
+
+    // Step D: If not exists, push new patient row
+    if (!updated) {
+      await PetrolAllowance.findOneAndUpdate(
+        { physioId: session.physioId, date: allowanceDate },
+        {
+          $push: {
+            summary: {
+              patientId: session.patientId,
+              travelKm: kmsToAdd,
+              type: "Completed",
+              sessionId: session._id,
+            },
+          },
+        },
+        { new: true, session: mongooseSession },
+      );
+    }
+
     await mongooseSession.commitTransaction();
-    res.status(200).json(session);
+
+    return res.status(200).json({
+      success: true,
+      message: "Session ended successfully",
+      data: session,
+    });
   } catch (error) {
     await mongooseSession.abortTransaction();
-    console.error("❌ SessionEnd Failed. Transaction Aborted:", error.message);
-    res.status(500).json({ message: error.message });
+    console.error("❌ SessionEnd Failed. Transaction Aborted:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   } finally {
     mongooseSession.endSession();
   }
 };
 
-async function triggerRoleNotifications(req, session, patient, type) {
+async function triggerRoleNotifications(
+  req,
+  session,
+  patient,
+  type,
+  reviewId = null,
+) {
   const roles = await RoleBased.find({
     RoleName: { $in: ["Admin", "SuperAdmin", "HOD"] },
   });
+
   const staff = await Employee.find({
     roleId: { $in: roles.map((r) => r._id) },
   });
+
   const io = req.app.get("socketio");
 
   for (const person of staff) {
     const note = await Notification.create({
       fromEmployeeId: session.physioId,
       toEmployeeId: person._id,
-      message: `Patient ${patient.patientName} reached 26 sessions. Bill generated.`,
+      message:
+        type === "Monthly-Bill-Alert"
+          ? `Patient ${patient.patientName} reached 26 sessions. Bill generated.`
+          : `Red flags added for patient ${patient.patientName}.`,
       type,
-      meta: { PatientId: patient._id },
+      meta: {
+        PatientId: patient._id,
+        SessionId: session._id,
+        ReviewId: reviewId,
+      },
     });
+
     if (io) io.to(person._id.toString()).emit("receiveNotification", note);
   }
 }
-
 exports.sessionCancelRevert = async (req, res) => {
   try {
     const { sessionId } = req.body;

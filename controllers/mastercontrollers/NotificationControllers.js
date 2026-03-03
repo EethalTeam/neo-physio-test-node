@@ -273,7 +273,41 @@ exports.updateNotificationStatus = async (req, res) => {
 
         // decide which field to increment
         const usedCancelledKm = Number(cancelledSession.cancelledKms || 0) > 0;
+        const patientDocId =
+          cancelledSession.patientId?._id || cancelledSession.patientId;
 
+        const summaryType = usedCancelledKm ? "Cancelled" : "Completed";
+
+        let paAfterSummaryUpdate = await PetrolAllowance.findOneAndUpdate(
+          {
+            physioId: cancelledSession.physioId,
+            date: allowanceDate,
+            "summary.patientId": patientDocId,
+            "summary.type": summaryType,
+          },
+          {
+            $inc: { "summary.$.travelKm": kmToAdd },
+            $set: { "summary.$.sessionId": cancelledSession._id },
+          },
+          { new: true },
+        );
+
+        if (!paAfterSummaryUpdate) {
+          paAfterSummaryUpdate = await PetrolAllowance.findOneAndUpdate(
+            { physioId: cancelledSession.physioId, date: allowanceDate },
+            {
+              $push: {
+                summary: {
+                  patientId: patientDocId,
+                  travelKm: kmToAdd,
+                  type: summaryType,
+                  sessionId: cancelledSession._id,
+                },
+              },
+            },
+            { new: true, upsert: true },
+          );
+        }
         const updatedPA = await PetrolAllowance.findOneAndUpdate(
           { physioId: cancelledSession.physioId, date: allowanceDate },
           {
@@ -281,7 +315,7 @@ exports.updateNotificationStatus = async (req, res) => {
               ...(usedCancelledKm
                 ? { cancelledKms: kmToAdd }
                 : { completedKms: kmToAdd }),
-              finalDailyKms: kmToAdd,
+              finalDailyKms: usedCancelledKm ? -kmToAdd : +kmToAdd,
             },
             $set: { petrolAllowanceClaimed: true },
           },
