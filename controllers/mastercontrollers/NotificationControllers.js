@@ -132,7 +132,6 @@ exports.markAsSeen = async (req, res) => {
     });
   }
 };
-
 exports.updateNotificationStatus = async (req, res) => {
   try {
     const { notificationId, action, physioId, patientId, date } = req.body;
@@ -146,6 +145,7 @@ exports.updateNotificationStatus = async (req, res) => {
 
     const newStatus = action === "approve" ? "approved" : "rejected";
 
+    // 1) Update original notification status
     const notification = await Notification.findByIdAndUpdate(
       notificationId,
       { status: newStatus },
@@ -156,7 +156,7 @@ exports.updateNotificationStatus = async (req, res) => {
       return res.status(404).json({ message: "Notification not found." });
     }
 
-    // ✅ Run petrol allowance logic only on approve
+    // 2) Petrol allowance logic only on approve
     if (action === "approve") {
       const meta = notification.meta || {};
       const SessionId = meta.SessionId;
@@ -171,13 +171,21 @@ exports.updateNotificationStatus = async (req, res) => {
         return res.status(404).json({ message: "Session not found" });
       }
 
-      // ✅ Use session flag (source of truth)
+      // console.log("APPROVE SESSION", {
+      //   SessionId,
+      //   petrolAllowanceClaimed: cancelledSession.petrolAllowanceClaimed,
+      //   cancelledKms: cancelledSession.cancelledKms,
+      //   sessionDate: cancelledSession.sessionDate,
+      //   physioId: cancelledSession.physioId,
+      // });
+
+      // source of truth
       const petrolAllowanceClaimed = !!cancelledSession.petrolAllowanceClaimed;
 
       const allowanceDate = new Date(cancelledSession.sessionDate);
       allowanceDate.setHours(12, 0, 0, 0);
 
-      // Always upsert doc + set claimed flag
+      // Ensure PetrolAllowance doc exists for that day (claimed flag update)
       await PetrolAllowance.findOneAndUpdate(
         { physioId: cancelledSession.physioId, date: allowanceDate },
         { $set: { petrolAllowanceClaimed } },
@@ -186,10 +194,13 @@ exports.updateNotificationStatus = async (req, res) => {
 
       // Only if claimed, add kms
       if (petrolAllowanceClaimed) {
-        // 1) Prefer cancelled km if available
         let kmToAdd = Number(cancelledSession.cancelledKms || 0);
 
-        // 2) Else fallback: compute previous session km (your existing logic)
+        // declare for debug scope
+        let firstCompleteSession = null;
+        let patientData = null;
+
+        // fallback if cancelledKms not present
         if (!Number.isFinite(kmToAdd) || kmToAdd <= 0) {
           const dayStart = new Date(cancelledSession.sessionDate);
           dayStart.setHours(0, 0, 0, 0);
@@ -203,7 +214,7 @@ exports.updateNotificationStatus = async (req, res) => {
 
           const statusIds = completedSessionStatus.map((s) => s._id);
 
-          const firstCompleteSession = await Session.findOne({
+          firstCompleteSession = await Session.findOne({
             physioId: cancelledSession.physioId,
             sessionDate: { $gte: dayStart, $lte: dayEnd },
             sessionStatusId: { $in: statusIds },
@@ -212,12 +223,26 @@ exports.updateNotificationStatus = async (req, res) => {
             .populate("patientId");
 
           if (firstCompleteSession?.patientId) {
-            kmToAdd = Number(firstCompleteSession.patientId.KmsfromHub || 0);
+            const p = firstCompleteSession.patientId;
+
+            kmToAdd = Number(
+              p.KmsfromHub ?? p.kmsFromHub ?? p.kmsfromHub ?? p.KmsFromHub ?? 0,
+            );
+
+            if (!Number.isFinite(kmToAdd) || kmToAdd <= 0) {
+              kmToAdd = Number(
+                p.kmsFromPrevious ??
+                  p.kmsfromPrevious ??
+                  p.KmsFromPrevious ??
+                  0,
+              );
+            }
           } else {
             const patientDocId =
               cancelledSession.patientId?._id || cancelledSession.patientId;
 
-            const patientData = await Patient.findById(patientDocId);
+            patientData = await Patient.findById(patientDocId);
+
             if (patientData) {
               kmToAdd =
                 patientData.visitOrder == 1
@@ -227,35 +252,53 @@ exports.updateNotificationStatus = async (req, res) => {
           }
         }
 
-        // Safety: if still 0, don't update kms
         if (!Number.isFinite(kmToAdd) || kmToAdd <= 0) {
+          // console.log("KM CALC FAILED", {
+          //   SessionId,
+          //   cancelledKms: cancelledSession.cancelledKms,
+          //   kmToAdd,
+          //   firstCompleteSession: firstCompleteSession?._id || null,
+          //   firstCompleteKmsFromHub:
+          //     firstCompleteSession?.patientId?.KmsfromHub || null,
+          //   patientDocKmsFromHub: patientData?.KmsfromHub || null,
+          //   patientDockmsFromPrevious: patientData?.kmsFromPrevious || null,
+          //   visitOrder: patientData?.visitOrder || null,
+          // });
+
           return res.status(400).json({
             message:
               "Unable to calculate KM (cancelledKms and fallback KM both are 0).",
           });
         }
 
-        // ✅ Decide which field to increment
-        // If cancelledKms was used => increment canceledKms
-        // Else (fallback used) => increment completedKms
+        // decide which field to increment
         const usedCancelledKm = Number(cancelledSession.cancelledKms || 0) > 0;
 
-        await PetrolAllowance.findOneAndUpdate(
+        const updatedPA = await PetrolAllowance.findOneAndUpdate(
           { physioId: cancelledSession.physioId, date: allowanceDate },
           {
             $inc: {
               ...(usedCancelledKm
-                ? { canceledKms: kmToAdd }
+                ? { cancelledKms: kmToAdd }
                 : { completedKms: kmToAdd }),
               finalDailyKms: kmToAdd,
             },
+            $set: { petrolAllowanceClaimed: true },
           },
           { new: true, upsert: true },
         );
+
+        console.log("KM UPDATED SUCCESS", {
+          kmToAdd,
+          usedCancelledKm,
+          petrolAllowanceId: updatedPA?._id,
+          savedDate: updatedPA?.date,
+          physioId: cancelledSession.physioId,
+        });
       }
     }
 
-    // ✅ Create response notification back to requester
+    // 3) Create response notification back to requester
     const Newnotification = new Notification({
       message: `Your ${notification.type} has been ${newStatus}`,
       type: "general",

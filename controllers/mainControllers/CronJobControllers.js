@@ -316,7 +316,7 @@ exports.initMonthlyBillingGeneration = () => {
 
 exports.initDailySessionGeneration = () => {
   cron.schedule(
-    "00 16 * * 1-6",
+    "00 5 * * 1-6",
     async () => {
       try {
         console.log("🚀 Starting Daily Session Generation (5 AM IST)...");
