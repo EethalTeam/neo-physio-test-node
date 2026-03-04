@@ -113,6 +113,7 @@ const sessionSchema = new mongoose.Schema(
       trim: true,
     },
     sessionCount: { type: Number },
+    monthlySessionCount: { type: Number },
     media: {
       type: String,
     },

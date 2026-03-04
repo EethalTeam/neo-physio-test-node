@@ -48,21 +48,20 @@ exports.createSession = async (req, res) => {
     }).session(mongooseSession);
     for (const dateStr of sessionDates) {
       const currentDate = new Date(dateStr);
+
       if (currentDate.getDay() === 0) {
         skippedDates.push({ date: dateStr, reason: "Sunday is not allowed" });
         continue;
       }
 
-      // const startOfDay = new Date(new Date(currentDate).setHours(0, 0, 0, 0));
-      // const endOfDay = new Date(
-      //   new Date(currentDate).setHours(23, 59, 59, 999),
-      // );
-      const startOfDayIST = new Date(`${dateStr}T00:00:00.000Z`);
-      const endOfDayIST = new Date(`${dateStr}T23:59:59.999Z`);
+      const startOfDay = new Date(`${dateStr}T00:00:00.000Z`);
+      const endOfDay = new Date(`${dateStr}T23:59:59.999Z`);
+
       const existingSession = await Session.findOne({
         patientId,
-        sessionDate: { $gte: startOfDayIST, $lte: endOfDayIST },
+        sessionDate: { $gte: startOfDay, $lte: endOfDay },
       }).session(mongooseSession);
+
       if (existingSession) {
         skippedDates.push({
           date: dateStr,
@@ -71,6 +70,29 @@ exports.createSession = async (req, res) => {
         continue;
       }
 
+      // TOTAL SESSION COUNT
+      const totalSessionCount = await Session.countDocuments({
+        patientId: patientId,
+      }).session(mongooseSession);
+
+      // MONTHLY SESSION COUNT
+      const monthStart = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth(),
+        1,
+      );
+
+      const monthEnd = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth() + 1,
+        1,
+      );
+
+      const monthlySessionCount = await Session.countDocuments({
+        patientId: patientId,
+        sessionDate: { $gte: monthStart, $lt: monthEnd },
+      }).session(mongooseSession);
+
       const counter = await Counter.findOneAndUpdate(
         { _id: "sessionCode" },
         { $inc: { seq: 1 } },
@@ -78,21 +100,20 @@ exports.createSession = async (req, res) => {
       );
 
       const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
-      const currentSessionCount =
-        baseCompletedCount + (createdSessions.length + 1);
+
       const newSession = new Session({
         sessionCode: formattedCode,
         patientId,
         physioId,
-        sessionDate: startOfDayIST,
-        sessionDay: startOfDayIST.toLocaleDateString("en-IN", {
-          weekday: "long",
-        }),
+        sessionDate: startOfDay,
+        sessionDay: startOfDay.toLocaleDateString("en-IN", { weekday: "long" }),
+
         sessionTime,
         sessionFromTime,
         sessionToTime,
         machineId,
         sessionStatusId,
+
         sessionFeedbackPros,
         sessionFeedbackCons,
         modeOfExercise,
@@ -102,13 +123,15 @@ exports.createSession = async (req, res) => {
         targetArea,
         media,
         modalities,
-        sessionCount: currentSessionCount,
+
+        sessionCount: totalSessionCount + 1,
+        monthlySessionCount: monthlySessionCount + 1, // NEW FIELD
       });
 
       const savedSession = await newSession.save({ session: mongooseSession });
+
       createdSessions.push(savedSession);
     }
-
     await mongooseSession.commitTransaction();
 
     res.status(200).json({
