@@ -14,11 +14,11 @@ const billSchema = new mongoose.Schema(
     },
     paymentType: {
       type: String,
-      enum: ["Full Payment", "Partial Payment"]
+      enum: ["Full Payment", "Partial Payment"],
     },
     paymentStatus: {
       type: String,
-      enum: ["Paid", "Pending","Partially Paid"],
+      enum: ["Paid", "Pending", "Partially Paid"],
       default: "Pending",
     },
     ReceivedAmount: {
@@ -44,6 +44,10 @@ const billSchema = new mongoose.Schema(
     ToDate: {
       type: Date,
       required: true,
+    },
+    isSend: {
+      type: Boolean,
+      default: false,
     },
     ratePerSession: {
       type: Number,

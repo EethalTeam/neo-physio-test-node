@@ -166,6 +166,24 @@ exports.deleteBill = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+exports.updateSendStatus = async (req, res) => {
+  try {
+    const { billId } = req.body;
+
+    const bill = await Bill.findByIdAndUpdate(
+      billId,
+      { isSend: true },
+      { new: true },
+    );
+
+    res.status(200).json({
+      message: "Bill marked as sent",
+      data: bill,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 exports.deleteAllBillsAndResetSessions = async (req, res) => {
   try {
     // 1) delete all bills

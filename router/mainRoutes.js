@@ -45,6 +45,7 @@ router.post("/Lead/QualifyLead", LeadControllers.QualifyLead);
 
 //Bill
 router.post("/Bill/createBill", BillCountrollers.createBill);
+router.post("/Bill/updateSendStatus", BillCountrollers.updateSendStatus);
 router.post("/Bill/receivePayment", BillCountrollers.receivePayment);
 router.post("/Bill/getAllBill", BillCountrollers.getAllBill);
 router.post("/Bill/deleteBill", BillCountrollers.deleteBill);

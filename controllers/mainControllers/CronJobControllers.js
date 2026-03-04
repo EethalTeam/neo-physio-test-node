@@ -580,8 +580,8 @@ exports.initReturnJourneyAllowanceCron = () => {
 
 exports.initMonthlyPayrollCron = () => {
   cron.schedule(
-    // "30 9 28-31 * *",
-    "10 15 * * *",
+    "30 9 28-31 * *",
+    // "10 15 * * *",
     async () => {
       try {
         const today = new Date();
