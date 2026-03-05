@@ -34,12 +34,12 @@ app.use(
   ),
 );
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"],
-  }),
-);
+app.use(cors({
+ origin: true,
+ methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+ allowedHeaders: ["Content-Type","Authorization"],
+}));
+
 require("dotenv").config();
 
 // app.post('/api/chatWithGemini', (req,res)=>{
