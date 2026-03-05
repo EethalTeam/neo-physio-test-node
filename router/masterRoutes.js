@@ -120,7 +120,7 @@ router.post(
 //ReviewControllers
 router.post("/Review/createReview", ReviewControllers.createReview);
 router.post("/Review/getAllReview", ReviewControllers.getAllReview);
-router.post("/Review/getSingleReview", ReviewControllers.getReviewById);
+router.post("/Review/getSingleReview", ReviewControllers.getSingleReview);
 router.post("/Review/updateReview", ReviewControllers.updateReview);
 router.post("/Review/deleteReview", ReviewControllers.deleteReview);
 

@@ -35,6 +35,7 @@ const notificationSchema = new mongoose.Schema(
         "Session-Update",
         "Session-Cancellation",
         "Session-Extended",
+        "Review-Postponed",
         "Pending-Review",
         "Review-Completed",
         "general",

@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const Review = require("../../model/masterModels/Review");
 const RedFlag = require("../../model/masterModels/Redflag");
 const ReviewStatus = require("../../model/masterModels/ReviewStatus");
-const Employee = require("../../model/masterModels/Physio");
+const Physio = require("../../model/masterModels/Physio");
 const RoleBased = require("../../model/masterModels/RBAC");
 const Notification = require("../../model/masterModels/Notification");
 const Patient = require("../../model/masterModels/Patient");
@@ -176,7 +176,7 @@ exports.getAllReview = async (req, res) => {
 };
 
 // Get Review by ID
-exports.getReviewById = async (req, res) => {
+exports.getSingleReview = async (req, res) => {
   try {
     const { patientId } = req.body;
 
@@ -189,8 +189,7 @@ exports.getReviewById = async (req, res) => {
       .populate("physioId", "physioName")
       .populate("reviewTypeId", "reviewTypeName")
       .populate("redFlags.redFlagId")
-      .populate("reviewStatusId", "reviewStatusName")
-      .populate("Satisfaction");
+      .populate("reviewStatusId", "reviewStatusName");
 
     if (!reviews.length) {
       return res
@@ -239,7 +238,9 @@ exports.updateReview = async (req, res) => {
       },
       { new: true, runValidators: true },
     );
-
+    const statusDoc =
+      await ReviewStatus.findById(reviewStatusId).select("reviewStatusName");
+    const statusName = statusDoc?.reviewStatusName || "";
     if (!review) {
       return res.status(404).json({ message: "Review not found" });
     }
@@ -257,43 +258,46 @@ exports.updateReview = async (req, res) => {
       ) {
         // 2. Find SuperAdmins and Admins
         const adminRoleId = await RoleBased.findOne({ RoleName: "Admin" });
-        if (!adminRoleId) {
-          res.status(400).json({ message: "Admin role not found" });
-        }
         const superAdminRoleId = await RoleBased.findOne({
           RoleName: "SuperAdmin",
         });
-        const PhysioRoleId = await RoleBased.findOne({
-          RoleName: "Physio",
-        });
-        if (!superAdminRoleId) {
-          res.status(400).json({ message: "SuperAdmin role not found" });
-        }
-        if (!PhysioRoleId) {
-          res.status(400).json({ message: "Physio role not found" });
+        if (!adminRoleId || !superAdminRoleId) {
+          return res
+            .status(400)
+            .json({ message: "Admin/SuperAdmin role not found" });
         }
 
-        const admins = await Employee.find({
+        const admins = await Physio.find({
           roleId: {
-            $in: [superAdminRoleId._id, adminRoleId._id, PhysioRoleId._id],
+            $in: [superAdminRoleId._id, adminRoleId._id],
           },
-        });
+        }).select("_id");
+        const targetPhysioId =
+          typeof physioId === "object" ? physioId?._id : physioId;
+
+        const recipients = [
+          ...admins.map((a) => a._id.toString()),
+          targetPhysioId?.toString(),
+        ].filter(Boolean);
+
+        const uniqueRecipients = [...new Set(recipients)];
         const patient = await Patient.findById(patientId);
         const patientName = patient ? patient.patientName : "the patient";
+
         if (admins.length > 0) {
           const io = req.app.get("socketio");
 
-          const notificationPromises = admins.map(async (admin) => {
+          const notificationPromises = uniqueRecipients.map(async (admin) => {
             const newNotification = new Notification({
               fromEmployeeId: physioId,
-              toEmployeeId: admin._id,
+              toEmployeeId: admin,
               message: `Review completed for ${patientName}. Feedback: ${feedback || "No feedback provided."}`,
               type: "Review-Completed",
               status: "unseen",
               meta: {
                 ReviewId: review._id,
                 PatientId: patientId,
-                PhysioId: physioId,
+                PhysioId: targetPhysioId,
               },
             });
 
@@ -343,5 +347,106 @@ exports.deleteReview = async (req, res) => {
     res.status(200).json({ message: "Review deleted successfully" });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+exports.updateReviewDate = async (req, res) => {
+  try {
+    const { _id, reviewDate, feedback } = req.body;
+
+    // ✅ validations
+    if (!mongoose.Types.ObjectId.isValid(_id)) {
+      return res.status(400).json({ message: "Invalid Review ID" });
+    }
+
+    if (!reviewDate) {
+      return res.status(400).json({ message: "reviewDate is required" });
+    }
+
+    // ✅ update only reviewDate + optional feedback
+    const update = { reviewDate };
+    if (feedback !== undefined) update.feedback = feedback;
+
+    const review = await Review.findByIdAndUpdate(_id, update, { new: true })
+      .populate("patientId", "patientName patientCode")
+      .populate("physioId", "physioName");
+
+    if (!review) {
+      return res.status(404).json({ message: "Review not found" });
+    }
+
+    // ---------------- NOTIFICATION (Postponed) ----------------
+    try {
+      const io = req.app.get("socketio");
+
+      // roles
+      const adminRole = await RoleBased.findOne({ RoleName: "Admin" }).select(
+        "_id",
+      );
+      const superAdminRole = await RoleBased.findOne({
+        RoleName: "SuperAdmin",
+      }).select("_id");
+
+      const roleIds = [adminRole?._id, superAdminRole?._id].filter(Boolean);
+
+      // admins list
+      const admins = roleIds.length
+        ? await Physio.find({ roleId: { $in: roleIds } }).select("_id")
+        : [];
+
+      // recipients = admins + review physio
+      const physioRecipientId = review?.physioId?._id
+        ? String(review.physioId._id)
+        : null;
+
+      const recipients = [
+        ...admins.map((a) => String(a._id)),
+        physioRecipientId,
+      ].filter(Boolean);
+
+      const uniqueRecipients = [...new Set(recipients)];
+
+      const patientName = review?.patientId?.patientName || "the patient";
+      const patientCode = review?.patientId?.patientCode
+        ? ` (${review.patientId.patientCode})`
+        : "";
+
+      const formattedDate = new Date(reviewDate).toLocaleDateString("en-IN");
+
+      const notifMessage = `⏳ Review postponed for ${patientName}${patientCode}. New review date: ${formattedDate}.`;
+
+      // ✅ create + emit
+      await Promise.all(
+        uniqueRecipients.map(async (toEmployeeId) => {
+          const newNotification = await Notification.create({
+            fromEmployeeId: physioRecipientId, // who is responsible (review physio)
+            toEmployeeId, // string id
+            message: notifMessage,
+            type: "Review-Postponed",
+            status: "unseen",
+            meta: {
+              ReviewId: review._id,
+              PatientId: review?.patientId?._id || null,
+              PhysioId: physioRecipientId,
+              reviewDate,
+            },
+          });
+
+          if (io && toEmployeeId) {
+            io.to(toEmployeeId).emit("receiveNotification", newNotification);
+          }
+        }),
+      );
+    } catch (notifyErr) {
+      console.error("ReviewDate Notification failed:", notifyErr.message);
+      // do not fail the API
+    }
+    // ----------------------------------------------------------
+
+    return res.status(200).json({
+      message: "Review date updated successfully",
+      data: review,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
   }
 };

@@ -223,7 +223,7 @@ exports.createPatients = async (req, res) => {
 
 exports.getAllPatients = async (req, res) => {
   try {
-    const { targetDate } = req.body; // Pass date like "2026-02-02"
+    const { targetDate, view } = req.body; // Pass date like "2026-02-02"
 
     // 1. One-time fix for Patient Codes (Existing logic)
     const conPatients = await Patient.find({
@@ -239,9 +239,13 @@ exports.getAllPatients = async (req, res) => {
       }
     }
 
-    let patientFilter = {
-      isRecovered: { $ne: true },
-    };
+    let patientFilter = {};
+
+    if (view === "recovered") {
+      patientFilter.isRecovered = true;
+    } else if (view === "active") {
+      patientFilter.isRecovered = { $ne: true };
+    }
 
     // 2. NEW LOGIC: Filter by Session Date
     if (targetDate) {
@@ -270,7 +274,8 @@ exports.getAllPatients = async (req, res) => {
       .populate("FeesTypeId", "feesTypeName")
       .populate("patientGenderId", "genderName")
       .populate("MedicalHistoryAndRiskFactor.RiskFactorID", "RiskFactorName")
-      .populate("physioId", "physioName");
+      .populate("physioId", "physioName")
+      .sort({ createdAt: -1 });
     const patientIds = patients.map((p) => p._id);
 
     const sessionCounts = await Session.find(
@@ -1027,5 +1032,68 @@ exports.getPhysioPatientCounts = async (req, res) => {
       success: false,
       message: error.message,
     });
+  }
+};
+exports.downloadPatient = async (req, res) => {
+  try {
+    const { rangeType, month, year, startDate, endDate, view, targetDate } =
+      req.body;
+
+    const patientFilter = {};
+
+    // ✅ view filter
+    if (view === "recovered") patientFilter.isRecovered = true;
+    else if (view === "active") patientFilter.isRecovered = { $ne: true };
+    // else: no view filter (all)
+
+    // ✅ Build date range
+    let from = null;
+    let to = null;
+
+    // A) month/year
+    if (rangeType === "month" && month && year) {
+      from = new Date(year, Number(month) - 1, 1, 0, 0, 0);
+      to = new Date(year, Number(month), 0, 23, 59, 59);
+    }
+
+    // B) last year
+    if (rangeType === "lastYear") {
+      to = new Date();
+      from = new Date();
+      from.setFullYear(to.getFullYear() - 1);
+      from.setHours(0, 0, 0, 0);
+    }
+
+    // C) custom start/end
+    if (startDate && endDate) {
+      from = new Date(startDate);
+      to = new Date(endDate);
+      from.setHours(0, 0, 0, 0);
+      to.setHours(23, 59, 59, 999);
+    }
+
+    // D) single day targetDate
+    if (!from && targetDate) {
+      from = new Date(targetDate);
+      from.setHours(0, 0, 0, 0);
+
+      to = new Date(targetDate);
+      to.setHours(23, 59, 59, 999);
+    }
+
+    // ✅ date filter (createdAt)
+    if (from && to) {
+      patientFilter.createdAt = { $gte: from, $lte: to };
+    }
+
+    const patients = await Patient.find(patientFilter)
+      .populate("patientGenderId", "genderName")
+      .populate("physioId", "physioName")
+      .sort({ createdAt: -1 }); // newest first
+
+    return res.status(200).json(patients);
+  } catch (error) {
+    console.error("Error in downloadPatient:", error);
+    return res.status(500).json({ message: error.message });
   }
 };

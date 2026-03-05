@@ -26,6 +26,7 @@ exports.createLead = async (req, res) => {
       sourceName,
       LeadStatusId,
       leadStatusName,
+      cbDate,
     } = req.body;
     //  CHECK DUPLICATE CONTACT NUMBER
     const existingLead = await Lead.findOne({ leadContactNo });
@@ -74,6 +75,7 @@ exports.createLead = async (req, res) => {
       sourceName,
       LeadStatusId,
       leadStatusName,
+      cbDate,
     };
     if (ReferenceId) {
       LeadData.ReferenceId = ReferenceId;
@@ -98,7 +100,7 @@ exports.getAllLeads = async (req, res) => {
 
     const leads = await Lead.find()
       .populate(
-        "leadGenderId leadSourceId physioCategoryId ReferenceId LeadStatusId"
+        "leadGenderId leadSourceId physioCategoryId ReferenceId LeadStatusId",
       )
       .skip(skip)
       .limit(limit)
@@ -120,7 +122,7 @@ exports.getAllLeads = async (req, res) => {
 exports.getLeadById = async (req, res) => {
   try {
     const lead = await Lead.findById(req.params.id).populate(
-      "leadGenderId leadSourceId physioCategoryId ReferenceId LeadStatusId"
+      "leadGenderId leadSourceId physioCategoryId ReferenceId LeadStatusId",
     );
 
     if (!lead) {
@@ -153,6 +155,7 @@ exports.updateLead = async (req, res) => {
       leadSourceName,
       LeadStatusId,
       leadStatusName,
+      cbDate,
     } = req.body;
 
     let LeadData = {
@@ -171,6 +174,7 @@ exports.updateLead = async (req, res) => {
       sourceName,
       LeadStatusId,
       leadStatusName,
+      cbDate,
     };
     if (ReferenceId) {
       LeadData.ReferenceId = ReferenceId;
@@ -180,7 +184,7 @@ exports.updateLead = async (req, res) => {
       {
         $set: LeadData,
       },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
     if (!lead) {
@@ -222,13 +226,13 @@ exports.QualifyLead = async (req, res) => {
     const lastConsultant = await Consultation.findOne(
       {},
       {},
-      { sort: { createdAt: -1 } }
+      { sort: { createdAt: -1 } },
     );
     let nextPatientNumber = 1;
 
     if (lastConsultant && lastConsultant.patientCode) {
       const lastNumber = parseInt(
-        lastConsultant.patientCode.replace("CON", "")
+        lastConsultant.patientCode.replace("CON", ""),
       );
       nextPatientNumber = isNaN(lastNumber) ? 1 : lastNumber + 1;
     }
@@ -268,7 +272,7 @@ exports.QualifyLead = async (req, res) => {
                 fromEmployeeId: fromEmployeeId,
                 toEmployeeId: hod._id,
                 message: `New Consultation created for ${leadName}. Scheduled Date: ${new Date(
-                  ConsultationDate
+                  ConsultationDate,
                 ).toLocaleDateString()}`,
                 type: "Consultation-Reminder",
                 status: "unseen",
@@ -283,7 +287,7 @@ exports.QualifyLead = async (req, res) => {
               if (io) {
                 io.to(hod._id.toString()).emit(
                   "receiveNotification",
-                  newNotification
+                  newNotification,
                 );
               }
             });
@@ -304,7 +308,7 @@ exports.QualifyLead = async (req, res) => {
           {
             $set: { LeadStatusId: new mongoose.Types.ObjectId(Leadstatus._id) },
           },
-          { new: true, runValidators: true }
+          { new: true, runValidators: true },
         );
         if (!lead) {
           return res.status(404).json({ message: "Lead not able to update" });
