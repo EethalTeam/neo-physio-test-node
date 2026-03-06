@@ -130,23 +130,40 @@ exports.receivePayment = async (req, res) => {
   }
 };
 
-// Get allConsultation
+// Get all bill
 exports.getAllBill = async (req, res) => {
   try {
-    const bills = await Bill.find()
-      .populate("physioId", "physioName")
-      .populate("patientId");
-    if (!bills) {
-      return res.status(400).json({ message: "Bill not found" });
+    const { month, year, patientId } = req.body;
+
+    const query = {};
+
+    // filter by bill month
+    if (month && month !== "ALL") {
+      query.month = String(month).trim();
     }
 
-    res.status(200).json(bills);
+    // filter by bill year
+    if (year && year !== "ALL") {
+      query.year = Number(year);
+    }
+
+    // optional patient filter
+    if (patientId && patientId !== "ALL") {
+      query.patientId = patientId;
+    }
+
+    const bills = await Bill.find(query)
+      .populate("physioId", "physioName")
+      .populate("patientId")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json(bills);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 
-// Delete a consultate
+// Delete a bill
 exports.deleteBill = async (req, res) => {
   try {
     const { _id } = req.body;
