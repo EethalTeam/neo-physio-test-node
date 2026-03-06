@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const Expense = require("../../model/masterModels/Expense");
 
-// Create a new Expense
+// Create Expense
 exports.createExpense = async (req, res) => {
   try {
     const {
@@ -20,34 +20,42 @@ exports.createExpense = async (req, res) => {
       otherDescription,
     } = req.body;
 
-    // Create and save the Expense
-    const expenses = new Expense({
+    const expense = new Expense({
       ExpenseTypeID,
       ExpenseCategoryId,
       expenseDate,
       expenseAmount,
-      PhysioId,
-      physioDescription,
-      officeExpDes,
-      ReferenceId,
-      PatientId,
-      referenceDes,
-      MachineiId,
-      machineDes,
-      otherDescription,
+      PhysioId: PhysioId || null,
+      physioDescription: physioDescription || "",
+      officeExpDes: officeExpDes || "",
+      ReferenceId: ReferenceId || null,
+      PatientId: PatientId || null,
+      referenceDes: referenceDes || "",
+      MachineiId: MachineiId || null,
+      machineDes: machineDes || "",
+      otherDescription: otherDescription || "",
     });
-    await expenses.save();
 
-    res.status(200).json({
+    await expense.save();
+
+    const savedExpense = await Expense.findById(expense._id)
+      .populate("ExpenseTypeID", "ExpenseTypeName")
+      .populate("ExpenseCategoryId", "ExpenseCategoryName")
+      .populate("PhysioId", "physioName")
+      .populate("ReferenceId", "sourceName")
+      .populate("PatientId", "patientName")
+      .populate("MachineiId", "machineName");
+
+    return res.status(201).json({
       message: "Expense created successfully",
-      data: expenses,
+      data: savedExpense,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 
-// Get all Expense
+// Get All Expense
 exports.getAllExpense = async (req, res) => {
   try {
     const expenses = await Expense.find()
@@ -56,33 +64,49 @@ exports.getAllExpense = async (req, res) => {
       .populate("PhysioId", "physioName")
       .populate("ReferenceId", "sourceName")
       .populate("PatientId", "patientName")
-      .populate("MachineiId", "machineName");
-    if (!expenses) {
-      res.status(400).json({ message: "Expense is not found" });
-    }
+      .populate("MachineiId", "machineName")
+      .sort({ expenseDate: -1, createdAt: -1 });
 
-    res.status(200).json(expenses);
+    return res.status(200).json({
+      message: "Expenses fetched successfully",
+      data: expenses,
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 
-// Get a single Expense by id
+// Get Single Expense
 exports.getSingleExpense = async (req, res) => {
   try {
-    const expenses = await Expense.findOne({ _id: req.body });
+    const { _id } = req.body;
 
-    if (!expenses) {
-      return res.status(400).json({ message: "Expense not found" });
+    if (!_id || !mongoose.Types.ObjectId.isValid(_id)) {
+      return res.status(400).json({ message: "Valid expense id is required" });
     }
 
-    res.status(200).json(expenses);
+    const expense = await Expense.findById(_id)
+      .populate("ExpenseTypeID", "ExpenseTypeName")
+      .populate("ExpenseCategoryId", "ExpenseCategoryName")
+      .populate("PhysioId", "physioName")
+      .populate("ReferenceId", "sourceName")
+      .populate("PatientId", "patientName")
+      .populate("MachineiId", "machineName");
+
+    if (!expense) {
+      return res.status(404).json({ message: "Expense not found" });
+    }
+
+    return res.status(200).json({
+      message: "Expense fetched successfully",
+      data: expense,
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 
-// Update a Expense
+// Update Expense
 exports.updateExpense = async (req, res) => {
   try {
     const {
@@ -102,7 +126,11 @@ exports.updateExpense = async (req, res) => {
       otherDescription,
     } = req.body;
 
-    const expenses = await Expense.findByIdAndUpdate(
+    if (!_id || !mongoose.Types.ObjectId.isValid(_id)) {
+      return res.status(400).json({ message: "Valid expense id is required" });
+    }
+
+    const expense = await Expense.findByIdAndUpdate(
       _id,
       {
         $set: {
@@ -110,49 +138,58 @@ exports.updateExpense = async (req, res) => {
           ExpenseCategoryId,
           expenseDate,
           expenseAmount,
-          PhysioId,
-          physioDescription,
-          officeExpDes,
-          ReferenceId,
-          PatientId,
-          referenceDes,
-          MachineiId,
-          machineDes,
-          otherDescription,
+          PhysioId: PhysioId || null,
+          physioDescription: physioDescription || "",
+          officeExpDes: officeExpDes || "",
+          ReferenceId: ReferenceId || null,
+          PatientId: PatientId || null,
+          referenceDes: referenceDes || "",
+          MachineiId: MachineiId || null,
+          machineDes: machineDes || "",
+          otherDescription: otherDescription || "",
         },
       },
       { new: true, runValidators: true },
-    );
+    )
+      .populate("ExpenseTypeID", "ExpenseTypeName")
+      .populate("ExpenseCategoryId", "ExpenseCategoryName")
+      .populate("PhysioId", "physioName")
+      .populate("ReferenceId", "sourceName")
+      .populate("PatientId", "patientName")
+      .populate("MachineiId", "machineName");
 
-    if (!expenses) {
-      return res.status(400).json({ message: "Expense Cant able to update" });
+    if (!expense) {
+      return res.status(404).json({ message: "Expense not found" });
     }
 
-    res
-      .status(200)
-      .json({ message: "Expense updated successfully", data: expenses });
+    return res.status(200).json({
+      message: "Expense updated successfully",
+      data: expense,
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 
-// Delete a Expense
+// Delete Expense
 exports.deleteExpense = async (req, res) => {
   try {
     const { _id } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(_id)) {
-      return res.status(400).json({ message: "Invalid ID" });
+    if (!_id || !mongoose.Types.ObjectId.isValid(_id)) {
+      return res.status(400).json({ message: "Valid expense id is required" });
     }
 
-    const expenses = await Expense.findByIdAndDelete(_id);
+    const expense = await Expense.findByIdAndDelete(_id);
 
-    if (!expenses) {
-      return res.status(400).json({ message: "Expense not found" });
+    if (!expense) {
+      return res.status(404).json({ message: "Expense not found" });
     }
 
-    res.status(200).json({ message: "Expense deleted successfully" });
+    return res.status(200).json({
+      message: "Expense deleted successfully",
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
