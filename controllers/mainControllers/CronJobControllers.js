@@ -166,39 +166,18 @@ exports.initSessionCron = (io) => {
 
 exports.initMonthlyBillingGeneration = () => {
   cron.schedule(
-    // "26 11 * * *",
     "0 8 28-31 * *",
-
     async () => {
       console.log("🔔 Monthly Billing Cron Triggered...");
       const today = new Date();
-      const lastDayOfMonth = new Date(
-        today.getFullYear(),
-        today.getMonth() + 1,
-        0,
-      ).getDate();
-
+      
       try {
         console.log("💳 Starting Monthly Bill Generation...");
-        const completedStatusId = new mongoose.Types.ObjectId(
-          "691ec69eae0e10763c8f21e0",
-        );
-        const startOfMonth = new Date(
-          today.getFullYear(),
-          today.getMonth(),
-          1,
-          0,
-          0,
-          0,
-        );
-        const endOfMonth = new Date(
-          today.getFullYear(),
-          today.getMonth(),
-          lastDayOfMonth,
-          23,
-          59,
-          59,
-        );
+        const completedStatusId = new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0");
+        
+        // Use calendar boundaries for the query filter only
+        const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0);
+        const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
 
         const billingData = await Session.aggregate([
           {
@@ -214,81 +193,53 @@ exports.initMonthlyBillingGeneration = () => {
               sessionCount: { $sum: 1 },
               sessions: { $push: "$_id" },
               physioId: { $first: "$physioId" },
+              // --- ADD THESE TWO LINES ---
+              firstSessionDate: { $min: "$sessionDate" }, 
+              lastSessionDate: { $max: "$sessionDate" },
             },
           },
         ]);
 
         for (const item of billingData) {
-          const patient = await Patient.findById(item._id).populate(
-            "FeesTypeId",
-          );
+          const patient = await Patient.findById(item._id).populate("FeesTypeId");
           if (!patient) continue;
 
           const feesTypeLabel = patient.FeesTypeId?.feesTypeName;
           if (feesTypeLabel === "PerMonth") continue;
 
           const rate = patient.feeAmount || 0;
-          const totalBilledAmount = rate * item.sessionCount; // Total before any deduction
+          const totalBilledAmount = rate * item.sessionCount;
 
-          // --- ADVANCE CALCULATION LOGIC ---
-
-          // 1. Get total advance ever paid by patient
+          // ... [ADVANCE CALCULATION LOGIC REMAINS THE SAME] ...
           const totalAdvancePaid = await Debit.aggregate([
             { $match: { patientId: item._id } },
             { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
           ]);
-          const totalAdvance =
-            totalAdvancePaid.length > 0 ? totalAdvancePaid[0].total : 0;
+          const totalAdvance = totalAdvancePaid.length > 0 ? totalAdvancePaid[0].total : 0;
 
-          // 2. Get total amount already deducted from previous bills
           const totalAlreadyDeducted = await Bill.aggregate([
             { $match: { patientId: item._id } },
             { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
           ]);
-          const usedAdvance =
-            totalAlreadyDeducted.length > 0 ? totalAlreadyDeducted[0].total : 0;
+          const usedAdvance = totalAlreadyDeducted.length > 0 ? totalAlreadyDeducted[0].total : 0;
 
-          // 3. Available Advance
           let availableAdvance = totalAdvance - usedAdvance;
-          let deductedFromAdvance = 0;
-
-          if (availableAdvance > 0) {
-            // If advance covers full bill or part of it
-            deductedFromAdvance = Math.min(availableAdvance, totalBilledAmount);
-          }
-
+          let deductedFromAdvance = Math.min(Math.max(availableAdvance, 0), totalBilledAmount);
           const netBilledAmount = totalBilledAmount - deductedFromAdvance;
 
-          // Determine Payment Status based on Net Amount
-          let paymentStatus = "Pending";
-          // if (netBilledAmount === 0 && totalBilledAmount > 0) {
-          //   paymentStatus = "Paid"; // Fully covered by advance
-          // } else if (deductedFromAdvance > 0) {
-          //   paymentStatus = "Partially Paid"; // Partially covered by advance
-          // }
+          if (!item.physioId) continue;
 
-          // --- CREATE THE BILL ---
-          if (!item.physioId) {
-            console.log(
-              `⚠️ Skipping bill: patient ${item._id} has no physioId in sessions`,
-            );
-            continue;
-          }
-          if (!patient.physioId) {
-            console.log(
-              `⚠️ Patient ${patient.patientName} has no patient.physioId, using item.physioId`,
-            );
-          }
+          // --- CREATE THE BILL USING AGGREGATED DATES ---
           await Bill.create({
             patientId: item._id,
             physioId: item.physioId,
-            paymentStatus: paymentStatus,
-            ReceivedAmount: deductedFromAdvance, // Amount "received" via advance
+            paymentStatus: "Pending",
+            ReceivedAmount: deductedFromAdvance,
             TotalBilledAmount: totalBilledAmount,
             DeductedFromAdvance: deductedFromAdvance,
             NetBilledAmount: netBilledAmount,
-            startDate: startOfMonth,
-            ToDate: endOfMonth,
+            startDate: item.firstSessionDate, // Dynamic start date
+            ToDate: item.lastSessionDate,     // Dynamic end date
             ratePerSession: rate,
             month: today.toLocaleString("default", { month: "long" }),
             year: today.getFullYear(),
@@ -300,11 +251,8 @@ exports.initMonthlyBillingGeneration = () => {
             { $set: { isBilled: true } },
           );
 
-          console.log(
-            `✅ Generated: ${patient.patientName} | Net: ₹${netBilledAmount} (Adv: ₹${deductedFromAdvance})`,
-          );
+          console.log(`✅ Generated: ${patient.patientName} | Range: ${item.firstSessionDate.toDateString()} to ${item.lastSessionDate.toDateString()}`);
         }
-
         console.log(`✅ Billing process finished.`);
       } catch (error) {
         console.error("❌ Error in Monthly Billing Job:", error);

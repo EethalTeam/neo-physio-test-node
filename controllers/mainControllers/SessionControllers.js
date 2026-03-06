@@ -816,6 +816,30 @@ exports.SessionEnd = async (req, res) => {
 
       const totalBilledAmount = Number(patient.feeAmount || 0);
 
+      // --- DYNAMIC DATE RANGE CALCULATION ---
+      // We look for all unbilled sessions + the current session to find the true range
+      const sessionRange = await Session.aggregate([
+        {
+          $match: {
+            patientId: patient._id,
+            isBilled: false,
+            // Include current session if it's not marked billed yet
+            $or: [{ _id: session._id }, { isBilled: false }] 
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            firstDate: { $min: "$sessionDate" },
+            lastDate: { $max: "$sessionDate" }
+          }
+        }
+      ]).session(mongooseSession);
+
+      // Fallback to start/end of month if aggregation finds nothing (failsafe)
+      const startDate = sessionRange.length > 0 ? sessionRange[0].firstDate : new Date(today.getFullYear(), today.getMonth(), 1);
+      const toDate = sessionRange.length > 0 ? sessionRange[0].lastDate : new Date();
+
       // debitDoc (old logic)
       const debitDoc = await Debit.findOne({
         patientId: patient._id,
@@ -824,7 +848,7 @@ exports.SessionEnd = async (req, res) => {
         .sort({ DebitDate: 1 })
         .session(mongooseSession);
 
-      // monthly aggregation (your current logic)
+      // monthly aggregation
       const monthlyAdvanceRecord = await Debit.aggregate([
         {
           $match: {
@@ -852,7 +876,6 @@ exports.SessionEnd = async (req, res) => {
         paymentStatus = "Paid";
       else if (deductedFromAdvance > 0) paymentStatus = "Partially Paid";
 
-      // ✅ Consume debit inside same transaction (if you want to reduce only ONE debit doc)
       if (debitDoc && deductedFromAdvance > 0) {
         debitDoc.DebitAmount = Number(
           (Number(debitDoc.DebitAmount || 0) - deductedFromAdvance).toFixed(2),
@@ -860,16 +883,6 @@ exports.SessionEnd = async (req, res) => {
         debitDoc.DebitDate = new Date();
         await debitDoc.save({ session: mongooseSession });
       }
-
-      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      const endOfToday = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        23,
-        59,
-        59,
-      );
 
       await Bill.create(
         [
@@ -881,8 +894,8 @@ exports.SessionEnd = async (req, res) => {
             TotalBilledAmount: totalBilledAmount,
             DeductedFromAdvance: deductedFromAdvance,
             NetBilledAmount: netBilledAmount,
-            startDate: startOfMonth,
-            ToDate: endOfToday,
+            startDate: startDate, // Updated to use dynamic range
+            ToDate: toDate,       // Updated to use dynamic range
             month: today.toLocaleString("default", { month: "long" }),
             year: currentYear,
             TotalSessionCount: session.sessionCount,
@@ -894,7 +907,8 @@ exports.SessionEnd = async (req, res) => {
       await Session.updateMany(
         {
           patientId: patient._id,
-          sessionDate: { $gte: startOfMonth, $lte: endOfToday },
+          // Update sessions that fall within the specific range identified
+          sessionDate: { $gte: startDate, $lte: toDate },
           isBilled: false,
         },
         { $set: { isBilled: true } },
@@ -952,7 +966,7 @@ exports.SessionEnd = async (req, res) => {
     }
 
     // ------------------------------
-    // 7) Petrol Allowance Logic (Daily + Patient Summary)
+    // 7) Petrol Allowance Logic
     // ------------------------------
     const kmsToAdd =
       Number(patient.visitOrder) === 1
@@ -962,7 +976,6 @@ exports.SessionEnd = async (req, res) => {
     const allowanceDate = new Date(session.sessionDate);
     allowanceDate.setHours(12, 0, 0, 0);
 
-    // Step A: Upsert day doc first (safe)
     await PetrolAllowance.findOneAndUpdate(
       { physioId: session.physioId, date: allowanceDate },
       {
@@ -981,14 +994,12 @@ exports.SessionEnd = async (req, res) => {
       { new: true, upsert: true, session: mongooseSession },
     );
 
-    // Step B: Add totals
     await PetrolAllowance.findOneAndUpdate(
       { physioId: session.physioId, date: allowanceDate },
       { $inc: { completedKms: kmsToAdd, finalDailyKms: kmsToAdd } },
       { new: true, session: mongooseSession },
     );
 
-    // Step C: Update patient row if exists
     const updated = await PetrolAllowance.findOneAndUpdate(
       {
         physioId: session.physioId,
@@ -1005,7 +1016,6 @@ exports.SessionEnd = async (req, res) => {
       { new: true, session: mongooseSession },
     );
 
-    // Step D: If not exists, push new patient row
     if (!updated) {
       await PetrolAllowance.findOneAndUpdate(
         { physioId: session.physioId, date: allowanceDate },
