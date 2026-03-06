@@ -166,24 +166,44 @@ exports.initSessionCron = (io) => {
 
 exports.initMonthlyBillingGeneration = () => {
   cron.schedule(
+    // "28 15 * * *",
     "0 8 28-31 * *",
     async () => {
       console.log("🔔 Monthly Billing Cron Triggered...");
       const today = new Date();
-      
+
       try {
         console.log("💳 Starting Monthly Bill Generation...");
-        const completedStatusId = new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0");
-        
-        // Use calendar boundaries for the query filter only
-        const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0);
-        const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
+        const completedStatusId = new mongoose.Types.ObjectId(
+          "691ec69eae0e10763c8f21e0",
+        );
 
+        // Use calendar boundaries for the query filter only
+        const startOfMonth = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          1,
+          0,
+          0,
+          0,
+        );
+        const endOfMonth = new Date(
+          today.getFullYear(),
+          today.getMonth() + 1,
+          0,
+          23,
+          59,
+          59,
+        );
+        console.log(startOfMonth, "startOfMonth", endOfMonth, "EndofMonth");
         const billingData = await Session.aggregate([
           {
             $match: {
               sessionStatusId: completedStatusId,
-              sessionDate: { $gte: startOfMonth, $lte: endOfMonth },
+              sessionDate: {
+                $gte: startOfMonth,
+                $lte: endOfMonth,
+              },
               isBilled: false,
             },
           },
@@ -194,14 +214,16 @@ exports.initMonthlyBillingGeneration = () => {
               sessions: { $push: "$_id" },
               physioId: { $first: "$physioId" },
               // --- ADD THESE TWO LINES ---
-              firstSessionDate: { $min: "$sessionDate" }, 
+              firstSessionDate: { $min: "$sessionDate" },
               lastSessionDate: { $max: "$sessionDate" },
             },
           },
         ]);
-
+        console.log(billingData, "billingData");
         for (const item of billingData) {
-          const patient = await Patient.findById(item._id).populate("FeesTypeId");
+          const patient = await Patient.findById(item._id).populate(
+            "FeesTypeId",
+          );
           if (!patient) continue;
 
           const feesTypeLabel = patient.FeesTypeId?.feesTypeName;
@@ -215,16 +237,21 @@ exports.initMonthlyBillingGeneration = () => {
             { $match: { patientId: item._id } },
             { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
           ]);
-          const totalAdvance = totalAdvancePaid.length > 0 ? totalAdvancePaid[0].total : 0;
+          const totalAdvance =
+            totalAdvancePaid.length > 0 ? totalAdvancePaid[0].total : 0;
 
           const totalAlreadyDeducted = await Bill.aggregate([
             { $match: { patientId: item._id } },
             { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
           ]);
-          const usedAdvance = totalAlreadyDeducted.length > 0 ? totalAlreadyDeducted[0].total : 0;
+          const usedAdvance =
+            totalAlreadyDeducted.length > 0 ? totalAlreadyDeducted[0].total : 0;
 
           let availableAdvance = totalAdvance - usedAdvance;
-          let deductedFromAdvance = Math.min(Math.max(availableAdvance, 0), totalBilledAmount);
+          let deductedFromAdvance = Math.min(
+            Math.max(availableAdvance, 0),
+            totalBilledAmount,
+          );
           const netBilledAmount = totalBilledAmount - deductedFromAdvance;
 
           if (!item.physioId) continue;
@@ -239,9 +266,11 @@ exports.initMonthlyBillingGeneration = () => {
             DeductedFromAdvance: deductedFromAdvance,
             NetBilledAmount: netBilledAmount,
             startDate: item.firstSessionDate, // Dynamic start date
-            ToDate: item.lastSessionDate,     // Dynamic end date
+            ToDate: item.lastSessionDate, // Dynamic end date
             ratePerSession: rate,
+            // month: "February",
             month: today.toLocaleString("default", { month: "long" }),
+            // year: 2026,
             year: today.getFullYear(),
             TotalSessionCount: item.sessionCount,
           });
@@ -251,7 +280,9 @@ exports.initMonthlyBillingGeneration = () => {
             { $set: { isBilled: true } },
           );
 
-          console.log(`✅ Generated: ${patient.patientName} | Range: ${item.firstSessionDate.toDateString()} to ${item.lastSessionDate.toDateString()}`);
+          console.log(
+            `✅ Generated: ${patient.patientName} | Range: ${item.firstSessionDate.toDateString()} to ${item.lastSessionDate.toDateString()}`,
+          );
         }
         console.log(`✅ Billing process finished.`);
       } catch (error) {
