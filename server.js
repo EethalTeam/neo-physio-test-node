@@ -34,11 +34,13 @@ app.use(
   ),
 );
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
-app.use(cors({
- origin: true,
- methods: ["GET","POST","PUT","DELETE","OPTIONS"],
- allowedHeaders: ["Content-Type","Authorization"],
-}));
+app.use(
+  cors({
+    origin: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 
 require("dotenv").config();
 
@@ -191,8 +193,8 @@ const createNotification = async ({
 async function main() {
   try {
     await mongoose.connect(
-      "mongodb+srv://restore_admin:enisdevteam123@enistechteam.owwtldg.mongodb.net/neo-physio?retryWrites=true&w=majority&appName=NEO-PHYSIO",
-      // "mongodb+srv://enisbehinderz_db_user:Eethaldevteam123@cluster0.f2yaxih.mongodb.net/neo-physio?retryWrites=true&w=majority&appName=NEO-PHYSIO",
+      // "mongodb+srv://restore_admin:enisdevteam123@enistechteam.owwtldg.mongodb.net/neo-physio?retryWrites=true&w=majority&appName=NEO-PHYSIO",
+      "mongodb+srv://enisbehinderz_db_user:Eethaldevteam123@cluster0.f2yaxih.mongodb.net/neo-physio?retryWrites=true&w=majority&appName=NEO-PHYSIO",
       {
         serverSelectionTimeoutMS: 30000,
         socketTimeoutMS: 45000,

@@ -316,8 +316,8 @@ exports.initMonthlyBillingGeneration = () => {
 
 exports.initDailySessionGeneration = () => {
   cron.schedule(
-    // "42 16 * * 1-6",
-    "00 5 * * 1-6",
+    "27 11 * * 1-6",
+    // "00 5 * * 1-6",
     async () => {
       try {
         console.log("🚀 Starting Daily Session Generation (5 AM IST)...");
@@ -325,105 +325,119 @@ exports.initDailySessionGeneration = () => {
         const { start, end } = getISTDateRange();
         const completedStatusId = "691ec69eae0e10763c8f21e0";
         const pendingStatusId = "691ecb36b87c5c57dead47a7";
-
+        console.log(end, "end");
         const activePatients = await Patient.find({
           isRecovered: false,
           sessionStartDate: { $lte: end },
         }).sort({ visitOrder: 1 });
-
+        console.log("activePatients", activePatients.length);
         for (const patient of activePatients) {
-          // 1) Check if session already exists for today
-          const exists = await Session.findOne({
-            patientId: patient._id,
-            sessionDate: { $gte: start, $lte: end },
-          });
-          if (exists) continue;
+          try {
+            const exists = await Session.findOne({
+              patientId: patient._id,
+              sessionDate: { $gte: start, $lte: end },
+            });
 
-          // --- LEAVE & REASSIGNMENT LOGIC START ---
-          let finalPhysioId = patient.physioId;
-          let finalSessionTime = patient.sessionTime;
+            if (exists) {
+              console.log(
+                `Skipping ${patient.patientName} - session already exists`,
+                // exists,
+              );
+              continue;
+            }
 
-          const leaveRecord = await LeaveModel.findOne({
-            physioId: patient.physioId,
-            LeaveDate: { $gte: start, $lte: end },
-            isActive: true,
-          });
+            let finalPhysioId = patient.physioId;
+            let finalSessionTime = patient.sessionTime;
 
-          if (leaveRecord && leaveRecord.SessionGenerateForLeave) {
-            const reassignmentData = leaveRecord.SessionGenerateForLeave.find(
-              (item) => item.patientId.toString() === patient._id.toString(),
+            const leaveRecord = await LeaveModel.findOne({
+              physioId: patient.physioId,
+              LeaveDate: { $gte: start, $lte: end },
+              isActive: true,
+            });
+
+            if (leaveRecord && leaveRecord.SessionGenerateForLeave) {
+              const reassignmentData = leaveRecord.SessionGenerateForLeave.find(
+                (item) => item.patientId?.toString() === patient._id.toString(),
+              );
+
+              if (reassignmentData && reassignmentData.Re_Assign) {
+                finalPhysioId = reassignmentData.Re_Assign;
+                finalSessionTime =
+                  reassignmentData.sessionTime || patient.sessionTime;
+
+                // console.log(
+                //   `Reassigned ${patient.patientName} to physio ${finalPhysioId}`,
+                // );
+              }
+            }
+
+            const counter = await Counter.findOneAndUpdate(
+              { _id: "sessionCode" },
+              { $inc: { seq: 1 } },
+              { new: true, upsert: true },
             );
 
-            if (reassignmentData && reassignmentData.Re_Assign) {
-              finalPhysioId = reassignmentData.Re_Assign;
-              finalSessionTime =
-                reassignmentData.sessionTime || patient.sessionTime;
+            const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
 
-              console.log(
-                `Reassigning Patient ${patient._id} from ${patient.physioId} to ${finalPhysioId}`,
-              );
-            }
+            const completedCount = await Session.countDocuments({
+              patientId: patient._id,
+              sessionStatusId: completedStatusId,
+            });
+
+            const currentSessionCount = completedCount + 1;
+
+            const monthStart = new Date(
+              start.getFullYear(),
+              start.getMonth(),
+              1,
+              0,
+              0,
+              0,
+              0,
+            );
+
+            const monthEnd = new Date(
+              start.getFullYear(),
+              start.getMonth() + 1,
+              1,
+              0,
+              0,
+              0,
+              0,
+            );
+
+            const monthlyCompletedCount = await Session.countDocuments({
+              patientId: patient._id,
+              sessionStatusId: completedStatusId,
+              sessionDate: { $gte: monthStart, $lt: monthEnd },
+            });
+
+            const currentMonthlySessionCount = monthlyCompletedCount + 1;
+
+            const sessionPayload = {
+              sessionCode: formattedCode,
+              patientId: patient._id,
+              physioId: finalPhysioId?._id || finalPhysioId,
+              sessionDate: start,
+              sessionDay: start.toLocaleDateString("en-IN", {
+                weekday: "long",
+              }),
+              sessionTime: finalSessionTime,
+              targetArea: patient.targetedArea,
+              sessionStatusId: pendingStatusId,
+              sessionCount: currentSessionCount,
+              monthlySessionCount: currentMonthlySessionCount,
+              modeOfExercise: "General",
+            };
+
+            // console.log("Creating payload:", sessionPayload);
+
+            await Session.create(sessionPayload);
+
+            // console.log(`Session created for ${patient.patientName}`);
+          } catch (error) {
+            console.error(`Error for ${patient.patientName}:`, error);
           }
-          // --- LEAVE & REASSIGNMENT LOGIC END ---
-
-          // 2) Increment Session Code Counter
-          const counter = await Counter.findOneAndUpdate(
-            { _id: "sessionCode" },
-            { $inc: { seq: 1 } },
-            { new: true, upsert: true },
-          );
-
-          const formattedCode = `SESS-${String(counter.seq).padStart(6, "0")}`;
-
-          // 3)  sessionCount (your current logic)
-          const completedCount = await Session.countDocuments({
-            patientId: patient._id,
-            sessionStatusId: completedStatusId,
-          });
-          const currentSessionCount = completedCount + 1;
-          // monthlySessionCount (ONLY COMPLETED in that month)
-          const monthStart = new Date(
-            start.getFullYear(),
-            start.getMonth(),
-            1,
-            0,
-            0,
-            0,
-            0,
-          );
-          const monthEnd = new Date(
-            start.getFullYear(),
-            start.getMonth() + 1,
-            1,
-            0,
-            0,
-            0,
-            0,
-          );
-
-          const monthlyCompletedCount = await Session.countDocuments({
-            patientId: patient._id,
-            sessionStatusId: completedStatusId,
-            sessionDate: { $gte: monthStart, $lt: monthEnd },
-          });
-
-          const currentMonthlySessionCount = monthlyCompletedCount + 1;
-          // 5) Create the Session
-          await Session.create({
-            sessionCode: formattedCode,
-            patientId: patient._id,
-            physioId: finalPhysioId,
-            sessionDate: start,
-            sessionDay: start.toLocaleDateString("en-IN", { weekday: "long" }),
-            sessionTime: finalSessionTime,
-            targetArea: patient.targetedArea,
-            sessionStatusId: pendingStatusId,
-
-            sessionCount: currentSessionCount,
-            monthlySessionCount: currentMonthlySessionCount,
-
-            modeOfExercise: "General",
-          });
         }
 
         console.log(`[5AM Cron] Daily session records generated successfully.`);
@@ -438,6 +452,8 @@ exports.initDailySessionGeneration = () => {
 exports.initScheduledReviewGeneration = () => {
   cron.schedule(
     "0 5 * * 1-6",
+    // "44 8 * * 1-6",
+
     async () => {
       try {
         console.log(
