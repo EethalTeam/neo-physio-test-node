@@ -134,41 +134,41 @@ exports.createRedflag = async (req, res) => {
 
 exports.getAllReview = async (req, res) => {
   try {
-    // 1. Calculate India Timezone (IST) boundaries
     const now = new Date();
-    // Manual offset for IST (UTC +5:30)
-    const offset = 5.5 * 60 * 60 * 1000;
-    const istNow = new Date(
-      now.getTime() + now.getTimezoneOffset() * 60000 + offset,
-    );
+    
+    // 1. Calculate the current day in India (IST)
+    // IST is UTC + 5.5 hours
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const todayIST = new Date(now.getTime() + istOffset);
 
-    // Today's Start (00:00:00 IST)
-    const startOfToday = new Date(istNow);
-    startOfToday.setHours(0, 0, 0, 0);
+    // 2. Set Start of Today (IST)
+    const startIST = new Date(todayIST);
+    startIST.setUTCHours(0, 0, 0, 0);
 
-    // Tomorrow's End (23:59:59 IST)
-    const endOfTomorrow = new Date(istNow);
-    endOfTomorrow.setDate(istNow.getDate() + 1);
-    endOfTomorrow.setHours(23, 59, 59, 999);
+    // 3. Set End of Tomorrow (IST)
+    const endIST = new Date(todayIST);
+    endIST.setUTCDate(endIST.getUTCDate() + 1);
+    endIST.setUTCHours(23, 59, 59, 999);
 
-    // 2. Query with date filter
+    // 4. Convert IST boundaries back to UTC for MongoDB query
+    // This shifts our search back by 5.5 hours to catch those 18:30:00.000Z records
+    const finalStart = new Date(startIST.getTime() - istOffset);
+    const finalEnd = new Date(endIST.getTime() - istOffset);
+
     const reviews = await Review.find({
       reviewDate: {
-        $gte: startOfToday,
-        $lte: endOfTomorrow,
+        $gte: finalStart,
+        $lte: finalEnd,
       },
     })
-      .populate(
-        "patientId",
-        "patientName shortTermGoals longTermGoals isRecovered",
-      )
+      .populate("patientId", "patientName shortTermGoals longTermGoals isRecovered")
       .populate("physioId", "physioName")
       .populate("reviewTypeId", "reviewTypeName")
-      .populate("redFlags.redFlagId")
       .populate("reviewStatusId", "reviewStatusName")
-      .sort({ reviewDate: 1 }); // Sorted by date for better visibility
+      .sort({ reviewDate: 1 });
 
     res.status(200).json(reviews);
+    
   } catch (error) {
     console.error("Error fetching reviews:", error);
     res.status(500).json({ message: error.message });
