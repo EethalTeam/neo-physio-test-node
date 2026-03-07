@@ -450,3 +450,62 @@ exports.updateReviewDate = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+exports.getAllReviewDownload = async (req, res) => {
+  try {
+    const { month, year } = req.body;
+
+    let filter = {};
+
+    if (month && year) {
+      const monthNumber = parseInt(month, 10);
+      const yearNumber = parseInt(year, 10);
+
+      if (
+        isNaN(monthNumber) ||
+        isNaN(yearNumber) ||
+        monthNumber < 1 ||
+        monthNumber > 12
+      ) {
+        return res.status(400).json({
+          message: "Invalid month or year",
+        });
+      }
+
+      const startDate = new Date(yearNumber, monthNumber - 1, 1, 0, 0, 0, 0);
+      const endDate = new Date(yearNumber, monthNumber, 1, 0, 0, 0, 0);
+
+      filter.reviewDate = {
+        $gte: startDate,
+        $lt: endDate,
+      };
+    }
+
+    const reviews = await Review.find(filter)
+      .populate(
+        "patientId",
+        "patientName shortTermGoals longTermGoals isRecovered",
+      )
+      .populate("physioId", "physioName")
+      .populate("reviewTypeId", "reviewTypeName")
+      .populate("redFlags.redFlagId")
+      .populate("reviewStatusId", "reviewStatusName")
+      .sort({ reviewDate: 1 });
+
+    const totalReviews = reviews.length;
+
+    const completedReviews = reviews.filter(
+      (review) =>
+        review.reviewStatusId?.reviewStatusName?.toLowerCase() === "completed",
+    ).length;
+
+    res.status(200).json({
+      report: reviews,
+      totalReviews,
+      completedReviews,
+      pendingReviews: totalReviews - completedReviews,
+    });
+  } catch (error) {
+    console.error("Error fetching reviews:", error);
+    res.status(500).json({ message: error.message });
+  }
+};

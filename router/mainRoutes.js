@@ -74,7 +74,7 @@ router.post("/Physio/loginPhysio", physioControllers.loginPhysio);
 router.post("/Physio/logoutPhysio", physioControllers.logoutPhysio);
 router.post("/Physio/logoutUser", physioControllers.logoutUser);
 router.post("/Physio/checkLogin", physioControllers.checkLogin);
-router.post("/Review/updateReviewDate", ReviewControllers.updateReviewDate);
+
 //Leave
 router.post("/LeaveControllers/saveLeavePlan", LeaveControllers.saveLeavePlan);
 router.post(
@@ -120,7 +120,12 @@ router.post(
   "/Patient/getAllPatientsByPhysioAndDate",
   PatientControllers.getAllPatientsByPhysioAndDate,
 );
-
+//Review
+router.post("/Review/updateReviewDate", ReviewControllers.updateReviewDate);
+router.post(
+  "/Review/getAllReviewDownload",
+  ReviewControllers.getAllReviewDownload,
+);
 //ExpenseControllers
 
 router.post("/createExpense", ExpenseControllers.createExpense);
@@ -149,7 +154,10 @@ router.post(
   "/Session/sessionCancelRevert",
   SessionControllers.sessionCancelRevert,
 );
-router.post("/Session/forceBillFirst26Sessions", SessionControllers.forceBillFirst26Sessions);
+router.post(
+  "/Session/forceBillFirst26Sessions",
+  SessionControllers.forceBillFirst26Sessions,
+);
 //Session Start and End
 
 router.post("/Session/SessionStart", SessionControllers.SessionStart);
