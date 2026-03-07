@@ -1041,12 +1041,12 @@ exports.downloadPatient = async (req, res) => {
 
     const patientFilter = {};
 
-    // ✅ view filter
+    // view filter
     if (view === "recovered") patientFilter.isRecovered = true;
     else if (view === "active") patientFilter.isRecovered = { $ne: true };
     // else: no view filter (all)
 
-    // ✅ Build date range
+    //Build date range
     let from = null;
     let to = null;
 
@@ -1081,7 +1081,7 @@ exports.downloadPatient = async (req, res) => {
       to.setHours(23, 59, 59, 999);
     }
 
-    // ✅ date filter (createdAt)
+    // date filter (createdAt)
     if (from && to) {
       patientFilter.createdAt = { $gte: from, $lte: to };
     }
@@ -1095,5 +1095,189 @@ exports.downloadPatient = async (req, res) => {
   } catch (error) {
     console.error("Error in downloadPatient:", error);
     return res.status(500).json({ message: error.message });
+  }
+};
+exports.downloadPatientsMonthlyReport = async (req, res) => {
+  try {
+    const { month, year, view = "all" } = req.body;
+
+    if (!month || !year) {
+      return res.status(400).json({
+        message: "month and year are required",
+      });
+    }
+
+    const monthNum = Number(month);
+    const yearNum = Number(year);
+
+    if (
+      Number.isNaN(monthNum) ||
+      Number.isNaN(yearNum) ||
+      monthNum < 1 ||
+      monthNum > 12
+    ) {
+      return res.status(400).json({
+        message: "Invalid month or year",
+      });
+    }
+
+    const startDate = new Date(yearNum, monthNum - 1, 1, 0, 0, 0, 0);
+    const endDate = new Date(yearNum, monthNum, 0, 23, 59, 59, 999);
+
+    const sessionCompletedId = "691ec69eae0e10763c8f21e0";
+    const sessionCancelledId = "692585f037162b40bd30a1ef";
+
+    // 1) get sessions only for selected month
+    const sessions = await Session.find({
+      sessionDate: {
+        $gte: startDate,
+        $lte: endDate,
+      },
+    })
+      .populate("physioId", "physioName")
+      .populate("sessionStatusId", "sessionStatusName sessionStatusColor")
+      .sort({ sessionDate: 1 });
+
+    // 2) collect patient ids from session dates
+    const uniquePatientIds = [
+      ...new Set(
+        sessions.map((s) => s.patientId && String(s.patientId)).filter(Boolean),
+      ),
+    ];
+
+    if (uniquePatientIds.length === 0) {
+      return res.status(200).json({
+        month: monthNum,
+        year: yearNum,
+        view,
+        startDate,
+        endDate,
+        summary: {
+          totalPatients: 0,
+          activePatients: 0,
+          recoveredPatients: 0,
+          totalSessions: 0,
+          totalCompletedSessions: 0,
+          totalCancelledSessions: 0,
+        },
+        report: [],
+      });
+    }
+
+    // 3) patient filter only from those session patient ids
+    const patientFilter = {
+      _id: { $in: uniquePatientIds },
+    };
+
+    if (view === "recovered") {
+      patientFilter.isRecovered = true;
+    } else if (view === "active") {
+      patientFilter.isRecovered = { $ne: true };
+    }
+
+    const patients = await Patient.find(patientFilter)
+      .populate("FeesTypeId", "feesTypeName")
+      .populate("patientGenderId", "genderName")
+      .populate("MedicalHistoryAndRiskFactor.RiskFactorID", "RiskFactorName")
+      .populate("physioId", "physioName")
+      .sort({ createdAt: -1 });
+
+    // 4) map sessions by patient
+    const sessionMap = {};
+    sessions.forEach((session) => {
+      const pid = String(session.patientId);
+      if (!sessionMap[pid]) {
+        sessionMap[pid] = [];
+      }
+      sessionMap[pid].push(session);
+    });
+
+    // 5) build report
+    const report = patients.map((patient) => {
+      const patientSessions = sessionMap[String(patient._id)] || [];
+
+      const completedSessions = patientSessions.filter((s) => {
+        const statusId = String(
+          s?.sessionStatusId?._id || s?.sessionStatusId || "",
+        );
+        return statusId === sessionCompletedId;
+      }).length;
+
+      const cancelledSessions = patientSessions.filter((s) => {
+        const statusId = String(
+          s?.sessionStatusId?._id || s?.sessionStatusId || "",
+        );
+        return statusId === sessionCancelledId;
+      }).length;
+
+      const isRecovered = patient.isRecovered === true;
+
+      return {
+        patientId: patient._id,
+        patientCode: patient.patientCode || "",
+        patientName: patient.patientName || "",
+        age: patient.patientAge || "",
+        gender: patient.patientGenderId?.genderName || "",
+        number: patient.patientNumber || "",
+        address: patient.patientAddress || "",
+        condition: patient.patientCondition || "",
+        consultationDate: patient.consultationDate || null,
+        reviewDate: patient.reviewDate || null,
+        isRecovered,
+        recovered: isRecovered ? "Recovered" : "Active",
+        statusLabel: isRecovered ? "Recovered" : "Active",
+        assignedPhysio: patient.physioId?.physioName || "",
+        totalSessions: patientSessions.length,
+        completedSessions,
+        cancelledSessions,
+        sessions: patientSessions.map((s) => ({
+          sessionId: s._id,
+          sessionDate: s.sessionDate || null,
+          statusId: String(s?.sessionStatusId?._id || s?.sessionStatusId || ""),
+          status:
+            s?.sessionStatusId?.sessionStatusName ||
+            s?.sessionStatus ||
+            s?.status ||
+            "",
+          remarks:
+            s?.sessionFeedbackPros ||
+            s?.sessionFeedbackCons ||
+            s?.sessionCancelReason ||
+            s?.remarks ||
+            "",
+          physioName: s?.physioId?.physioName || "",
+        })),
+      };
+    });
+
+    const summary = {
+      totalPatients: report.length,
+      activePatients: report.filter((p) => !p.isRecovered).length,
+      recoveredPatients: report.filter((p) => p.isRecovered).length,
+      totalSessions: report.reduce((sum, p) => sum + (p.totalSessions || 0), 0),
+      totalCompletedSessions: report.reduce(
+        (sum, p) => sum + (p.completedSessions || 0),
+        0,
+      ),
+      totalCancelledSessions: report.reduce(
+        (sum, p) => sum + (p.cancelledSessions || 0),
+        0,
+      ),
+    };
+
+    return res.status(200).json({
+      month: monthNum,
+      year: yearNum,
+      view,
+      startDate,
+      endDate,
+      summary,
+      report,
+    });
+  } catch (error) {
+    console.error("downloadPatientsMonthlyReport error:", error);
+    return res.status(500).json({
+      message: error.message,
+    });
   }
 };
