@@ -1053,6 +1053,57 @@ exports.SessionEnd = async (req, res) => {
   }
 };
 
+exports.forceBillFirst26Sessions = async (req, res) => {
+  try {
+    const { patientId } = req.body;
+
+    if (!patientId) {
+      return res.status(400).json({ message: "Patient ID is required." });
+    }
+
+    // 1. Get the 'Completed' status ID to ensure we only bill actual treatments
+    const completedStatus = await SessionStatus.findOne({ 
+      sessionStatusName: { $regex: /completed/i } 
+    });
+
+    if (!completedStatus) {
+      return res.status(404).json({ message: "Completed session status not found." });
+    }
+
+    // 2. Find the first 26 completed sessions (ordered by date)
+    // We don't filter by isBilled here; we just take the top 26 oldest records.
+    const sessionsToUpdate = await Session.find({
+      patientId: patientId,
+      sessionStatusId: completedStatus._id
+    })
+    .sort({ sessionDate: 1 }) 
+    .limit(26)
+    .select("_id"); // We only need the IDs for the update
+
+    if (sessionsToUpdate.length === 0) {
+      return res.status(200).json({ message: "No completed sessions found to bill." });
+    }
+
+    const ids = sessionsToUpdate.map(s => s._id);
+
+    // 3. Force isBilled to true for these specific IDs
+    const result = await Session.updateMany(
+      { _id: { $in: ids } },
+      { $set: { isBilled: true } }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `Updated ${result.modifiedCount} sessions to billed status (Targeted: ${ids.length}).`,
+      totalTargeted: ids.length
+    });
+
+  } catch (error) {
+    console.error("Force Billing Error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 async function triggerRoleNotifications(
   req,
   session,

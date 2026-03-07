@@ -145,6 +145,7 @@ router.post(
   "/Session/sessionCancelRevert",
   SessionControllers.sessionCancelRevert,
 );
+router.post("/Session/forceBillFirst26Sessions", SessionControllers.forceBillFirst26Sessions);
 //Session Start and End
 
 router.post("/Session/SessionStart", SessionControllers.SessionStart);
