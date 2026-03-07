@@ -457,6 +457,90 @@ exports.getIncomeByDate = async (req, res) => {
 //   }
 // };
 
+// exports.getAllPatientsIncome = async (req, res) => {
+//   try {
+//     const { month, year } = req.body;
+//     if (!month || !year) {
+//       return res.status(400).json({ message: "Month and Year are required." });
+//     }
+
+//     const patients = await Patient.find()
+//       .populate("FeesTypeId", "feesTypeName")
+//       .populate("patientGenderId", "genderName")
+//       .populate("MedicalHistoryAndRiskFactor.RiskFactorID", "RiskFactorName")
+//       .populate("physioId", "physioName");
+
+//     const result = await Promise.all(
+//       patients.map(async (p) => {
+//         const sessions = await Session.find({
+//           patientId: p._id,
+//           sessionDate: {
+//             $gte: new Date(year, month - 1, 1),
+//             $lt: new Date(year, month, 1),
+//           },
+//         }).populate("sessionStatusId", "sessionStatusName");
+
+//         const completedSessions = sessions.filter(
+//           (s) =>
+//             s.sessionStatusId?.sessionStatusName &&
+//             s.sessionStatusId.sessionStatusName.toLowerCase() === "completed",
+//         );
+//         const NonbilledSessions = sessions.filter(
+//           (s) =>
+//             s.sessionStatusId?.sessionStatusName &&
+//             s.sessionStatusId.sessionStatusName.toLowerCase() === "completed" &&
+//             (s.isBilled === false || s.isBilled === undefined),
+//         );
+//         const billedSessions = sessions.filter(
+//           (s) =>
+//             s.sessionStatusId?.sessionStatusName &&
+//             s.sessionStatusId.sessionStatusName.toLowerCase() === "completed" &&
+//             s.isBilled === true,
+//         );
+//         const totalCompleted = completedSessions.length;
+//         const totalNonBilled = NonbilledSessions.length;
+//         const totalBilled = billedSessions.length;
+//         let totalIncome = 0;
+//         let Billed = 0;
+//         let NonBilled = 0;
+//         const feeTypeName = p.FeesTypeId?.feesTypeName;
+//         const baseFee = p.feeAmount || 0;
+
+//         if (feeTypeName === "PerSession") {
+//           totalIncome = baseFee * totalCompleted;
+//           Billed = baseFee * totalBilled;
+//           NonBilled = baseFee * totalNonBilled;
+//         } else if (feeTypeName === "PerMonth") {
+//           const ratePerSession = baseFee / 26;
+//           totalIncome = ratePerSession * totalCompleted;
+//           Billed = ratePerSession * totalBilled;
+//           NonBilled = ratePerSession * totalNonBilled;
+//         }
+
+//         return {
+//           _id: p._id,
+//           patientName: p.patientName,
+//           physioName: p.physioId?.physioName,
+//           physioId: p.physioId?._id,
+//           feeType: feeTypeName || "N/A",
+//           feePerSession:
+//             feeTypeName === "PerMonth" ? (baseFee / 26).toFixed(2) : baseFee,
+//           totalCompletedSessions: totalCompleted,
+//           totalIncome: Number(totalIncome.toFixed(2)),
+//           totalBilled: totalBilled,
+//           totalNonBilled: totalNonBilled,
+//           Billed: Number(Billed.toFixed(2)),
+//           NonBilled: Number(NonBilled.toFixed(2)),
+//         };
+//       }),
+//     );
+//     res.status(200).json(result);
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+
 exports.getAllPatientsIncome = async (req, res) => {
   try {
     const { month, year } = req.body;
@@ -478,31 +562,53 @@ exports.getAllPatientsIncome = async (req, res) => {
             $gte: new Date(year, month - 1, 1),
             $lt: new Date(year, month, 1),
           },
-        }).populate("sessionStatusId", "sessionStatusName");
+        })
+        .populate("sessionStatusId", "sessionStatusName")
+        .populate("physioId", "physioName");
 
+        // 1. Get all completed sessions first
         const completedSessions = sessions.filter(
           (s) =>
             s.sessionStatusId?.sessionStatusName &&
-            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed",
+            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed"
         );
-        const NonbilledSessions = sessions.filter(
-          (s) =>
-            s.sessionStatusId?.sessionStatusName &&
-            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed" &&
-            (s.isBilled === false || s.isBilled === undefined),
+
+        // --- NEW LOGIC: Count Sessions per Physio ---
+        const physioMap = {};
+
+        completedSessions.forEach(s => {
+          if (s.physioId) {
+            const id = s.physioId._id.toString();
+            if (!physioMap[id]) {
+              physioMap[id] = {
+                physioId: id,
+                physioName: s.physioId.physioName,
+                sessionCount: 0
+              };
+            }
+            physioMap[id].sessionCount += 1;
+          }
+        });
+
+        // Convert the map back into an array for the response
+        const physioDetails = Object.values(physioMap);
+        // --------------------------------------------
+
+        const NonbilledSessions = completedSessions.filter(
+          (s) => s.isBilled === false || s.isBilled === undefined
         );
-        const billedSessions = sessions.filter(
-          (s) =>
-            s.sessionStatusId?.sessionStatusName &&
-            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed" &&
-            s.isBilled === true,
+        const billedSessions = completedSessions.filter(
+          (s) => s.isBilled === true
         );
+
         const totalCompleted = completedSessions.length;
         const totalNonBilled = NonbilledSessions.length;
         const totalBilled = billedSessions.length;
+
         let totalIncome = 0;
         let Billed = 0;
         let NonBilled = 0;
+
         const feeTypeName = p.FeesTypeId?.feesTypeName;
         const baseFee = p.feeAmount || 0;
 
@@ -520,11 +626,11 @@ exports.getAllPatientsIncome = async (req, res) => {
         return {
           _id: p._id,
           patientName: p.patientName,
-          physioName: p.physioId?.physioName,
-          physioId: p.physioId?._id,
+          // Returns array like: [{ physioId: "...", physioName: "...", sessionCount: 5 }]
+          physioDetails: physioDetails, 
           feeType: feeTypeName || "N/A",
           feePerSession:
-            feeTypeName === "PerMonth" ? (baseFee / 26).toFixed(2) : baseFee,
+            feeTypeName === "PerMonth" ? Number((baseFee / 26).toFixed(2)) : baseFee,
           totalCompletedSessions: totalCompleted,
           totalIncome: Number(totalIncome.toFixed(2)),
           totalBilled: totalBilled,
@@ -532,8 +638,9 @@ exports.getAllPatientsIncome = async (req, res) => {
           Billed: Number(Billed.toFixed(2)),
           NonBilled: Number(NonBilled.toFixed(2)),
         };
-      }),
+      })
     );
+
     res.status(200).json(result);
   } catch (error) {
     console.error(error);
