@@ -91,6 +91,10 @@ router.post("/Patient/updatePatient", PatientControllers.updatePatients);
 router.post("/Patient/deletePatient", PatientControllers.deletePatients);
 router.post("/Patient/downloadPatient", PatientControllers.downloadPatient);
 router.post(
+  "/Patient/downloadPatientsMonthlyReport",
+  PatientControllers.downloadPatientsMonthlyReport,
+);
+router.post(
   "/Patient/getAllPatientsIncome",
   PatientControllers.getAllPatientsIncome,
 );
