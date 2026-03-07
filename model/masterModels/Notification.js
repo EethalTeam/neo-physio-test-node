@@ -34,7 +34,6 @@ const notificationSchema = new mongoose.Schema(
         `Monthly-Bill-Alert`,
         "Session-Update",
         "Session-Cancellation",
-        "session-cancel-approval",
         "Session-Extended",
         "Review-Postponed",
         "Pending-Review",
