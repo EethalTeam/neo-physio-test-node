@@ -593,16 +593,20 @@ exports.SessionCancel = async (req, res) => {
     const {
       _id,
       action,
-      physioId,
       cancelledKms,
       userRole,
       physioName,
       petrolAllowanceClaimed,
       cancelledReason,
     } = req.body;
-    console.log(cancelledReason, "cancelledReason");
-    const Status = await SessionStatus.findOne({ sessionStatusName: action });
-    if (!Status) {
+
+    const isPetrolClaimed =
+      petrolAllowanceClaimed === true || petrolAllowanceClaimed === "true";
+
+    const statusData = await SessionStatus.findOne({
+      sessionStatusName: action,
+    });
+    if (!statusData) {
       return res.status(400).json({ message: "Session Status is not found" });
     }
 
@@ -610,52 +614,74 @@ exports.SessionCancel = async (req, res) => {
       _id,
       {
         $set: {
-          sessionStatusId: Status._id,
+          sessionStatusId: statusData._id,
           sessionCancelReason: cancelledReason,
           sessionFeedbackCons: cancelledReason,
-          petrolAllowanceClaimed: petrolAllowanceClaimed,
-          cancelledKms: cancelledKms,
+          petrolAllowanceClaimed: isPetrolClaimed,
+          cancelledKms: cancelledKms || 0,
         },
       },
       { new: true, runValidators: true },
     );
-    console.log(cancelledSession, "cancelledSession");
+
     if (!cancelledSession) {
       return res.status(400).json({ message: "Session not found" });
     }
 
     try {
       const patient = await Patient.findById(cancelledSession.patientId);
-
-      const roles = await RoleBased.find({
-        RoleName: { $in: ["Admin", "SuperAdmin", "HOD"] },
-      });
-      const roleIds = roles.map((r) => r._id);
-
-      const staffToNotify = await Employee.find({
-        roleId: { $in: roleIds },
-      });
-
-      const recipientIds = new Set(
-        staffToNotify.map((emp) => emp._id.toString()),
-      );
-      if (cancelledSession.physioId) {
-        recipientIds.add(cancelledSession.physioId.toString());
-      }
-
       const io = req.app.get("socketio");
 
-      const notificationPromises = Array.from(recipientIds).map(
-        async (empId) => {
-          const notification = new Notification({
+      const hodRole = await RoleBased.findOne({ RoleName: "HOD" });
+      const superAdminRole = await RoleBased.findOne({
+        RoleName: "SuperAdmin",
+      });
+
+      const hodEmployees = hodRole
+        ? await Employee.find({ roleId: hodRole._id }).select("_id")
+        : [];
+
+      const superAdminEmployees = superAdminRole
+        ? await Employee.find({ roleId: superAdminRole._id }).select("_id")
+        : [];
+
+      const notificationsToCreate = [];
+
+      for (const hod of hodEmployees) {
+        notificationsToCreate.push({
+          fromEmployeeId: cancelledSession.physioId,
+          toEmployeeId: hod._id,
+          message: `Session ${cancelledSession.sessionCode} for ${
+            patient?.patientName || "Patient"
+          } has been cancelled for ${new Date(
+            cancelledSession.sessionDate,
+          ).toLocaleDateString("en-IN")}. Reason: ${
+            cancelledSession.sessionCancelReason || "No reason provided"
+          }. Cancelled by ${userRole} (${physioName}).`,
+          type: "Session-Cancellation",
+          status: "unseen",
+          meta: {
+            SessionId: cancelledSession._id,
+            PatientId: cancelledSession.patientId,
+            PhysioId: cancelledSession.physioId,
+            Date: cancelledSession.sessionDate,
+          },
+        });
+      }
+
+      if (isPetrolClaimed) {
+        for (const superAdmin of superAdminEmployees) {
+          notificationsToCreate.push({
             fromEmployeeId: cancelledSession.physioId,
-            toEmployeeId: empId,
-            message: `Session ${cancelledSession.sessionCode} for ${
-              patient?.patientName || "Patient"
-            } has been cancelled and the Reason is ${
-              cancelledSession.sessionCancelReason
-            } for the date of ${cancelledSession.sessionDate.toLocaleDateString()} - ${userRole} (${physioName}) - ${petrolAllowanceClaimed ? "Petrol Allowance Claimed" : "Petrol Allowance Not Claimed"}.`,
-            type: petrolAllowanceClaimed ? "Petrol-Allowance" : "general",
+            toEmployeeId: superAdmin._id,
+            message: `Petrol allowance approval needed for cancelled session ${
+              cancelledSession.sessionCode
+            } of ${patient?.patientName || "Patient"} on ${new Date(
+              cancelledSession.sessionDate,
+            ).toLocaleDateString("en-IN")}. Reason: ${
+              cancelledSession.sessionCancelReason || "No reason provided"
+            }. Claimed KMs: ${cancelledSession.cancelledKms || 0}.`,
+            type: "Petrol-Allowance", // use this if frontend already supports it
             status: "unseen",
             meta: {
               SessionId: cancelledSession._id,
@@ -664,91 +690,57 @@ exports.SessionCancel = async (req, res) => {
               Date: cancelledSession.sessionDate,
             },
           });
+        }
+      }
 
-          await notification.save();
+      if (cancelledSession.physioId) {
+        notificationsToCreate.push({
+          fromEmployeeId: cancelledSession.physioId,
+          toEmployeeId: cancelledSession.physioId,
+          message: `Your session ${cancelledSession.sessionCode} for ${
+            patient?.patientName || "Patient"
+          } on ${new Date(cancelledSession.sessionDate).toLocaleDateString(
+            "en-IN",
+          )} has been marked as cancelled.`,
+          type: "Session-Cancellation",
+          status: "unseen",
+          meta: {
+            SessionId: cancelledSession._id,
+            PatientId: cancelledSession.patientId,
+            PhysioId: cancelledSession.physioId,
+            Date: cancelledSession.sessionDate,
+          },
+        });
+      }
 
-          if (io) {
-            io.to(empId).emit("receiveNotification", notification);
-          }
-        },
+      const savedNotifications = await Notification.insertMany(
+        notificationsToCreate,
       );
 
-      await Promise.all(notificationPromises);
+      if (io && savedNotifications.length > 0) {
+        savedNotifications.forEach((notification) => {
+          io.to(notification.toEmployeeId.toString()).emit(
+            "receiveNotification",
+            notification,
+          );
+        });
+      }
     } catch (notifyErr) {
       console.error("Cancellation Notification Error:", notifyErr.message);
     }
 
-    res.status(200).json({
-      message: "Session cancelled, rescheduled, and notifications sent.",
+    return res.status(200).json({
+      message: "Session cancelled and notifications sent successfully.",
       cancelledSession,
     });
-
-    // const patientData = await Patient.findById(cancelledSession.patientId);
-    // if (patientData) {
-    //   // let kmsToAdd = patientData.KmsfLPatienttoHub || 0;
-    //   const allowanceDate = new Date(cancelledSession.sessionDate);
-    //   allowanceDate.setHours(12, 0, 0, 0);
-    //   let travelKm = 0;
-    //   if (petrolAllowanceClaimed) {
-    //     const dayStart = new Date(cancelledSession.sessionDate);
-    //     dayStart.setHours(0, 0, 0, 0);
-    //     const dayEnd = new Date(cancelledSession.sessionDate);
-    //     dayEnd.setHours(23, 59, 59, 999);
-    //     const completedSessionStatus = await SessionStatus.find({
-    //       sessionStatusName: { $in: ["Completed", "Attended"] },
-    //     }).select("_id");
-    //     const StatusIds = completedSessionStatus.map((s) => s._id);
-    //     const firstCompleteSession = await Session.findOne({
-    //       physioId: cancelledSession.physioId,
-    //       sessionDate: { $gte: dayStart, $lte: dayEnd },
-    //       sessionStatusId: { $in: StatusIds },
-    //     })
-    //       .sort({ sessionToTime: 1 })
-    //       .populate("patientId");
-    //     if (firstCompleteSession?.patientId) {
-    //       travelKm = Number(firstCompleteSession.patientId.KmsfromHub || 0);
-    //     } else {
-    //       const patientData = await Patient.findById(
-    //         cancelledSession.patientId,
-    //       );
-    //       if (patientData) {
-    //         travelKm =
-    //           patientData.visitOrder == 1
-    //             ? Number(patientData.KmsfromHub || 0)
-    //             : Number(patientData.kmsFromPrevious || 0);
-    //       }
-    //     }
-
-    //     // if (patientData.visitOrder === 1) {
-    //     //   kmsToAdd = patientData.KmsfromHub || 0;
-    //     // } else {
-    //     //   kmsToAdd = patientData.kmsFromPrevious || 0;
-    //     // }
-    //   }
-
-    //   await PetrolAllowance.findOneAndUpdate(
-    //     {
-    //       physioId: cancelledSession.physioId,
-    //       date: allowanceDate,
-    //     },
-    //     {
-    //       $set: { petrolAllowanceClaimed: petrolAllowanceClaimed },
-
-    //       $inc: {
-    //         completedKms: travelKm,
-    //         // canceledKms: cancelledKms || 0,
-    //         finalDailyKms: travelKm,
-    //       },
-    //     },
-    //     { new: true, upsert: true },
-    //   );
-    // }
   } catch (error) {
+    console.error("SessionCancel Error:", error);
     if (!res.headersSent) {
-      res.status(500).json({ message: error.message });
+      return res.status(500).json({ message: error.message });
     }
   }
 };
+
 exports.SessionEnd = async (req, res) => {
   const mongooseSession = await mongoose.startSession();
   mongooseSession.startTransaction();
@@ -824,21 +816,25 @@ exports.SessionEnd = async (req, res) => {
             patientId: patient._id,
             isBilled: false,
             // Include current session if it's not marked billed yet
-            $or: [{ _id: session._id }, { isBilled: false }] 
-          }
+            $or: [{ _id: session._id }, { isBilled: false }],
+          },
         },
         {
           $group: {
             _id: null,
             firstDate: { $min: "$sessionDate" },
-            lastDate: { $max: "$sessionDate" }
-          }
-        }
+            lastDate: { $max: "$sessionDate" },
+          },
+        },
       ]).session(mongooseSession);
 
       // Fallback to start/end of month if aggregation finds nothing (failsafe)
-      const startDate = sessionRange.length > 0 ? sessionRange[0].firstDate : new Date(today.getFullYear(), today.getMonth(), 1);
-      const toDate = sessionRange.length > 0 ? sessionRange[0].lastDate : new Date();
+      const startDate =
+        sessionRange.length > 0
+          ? sessionRange[0].firstDate
+          : new Date(today.getFullYear(), today.getMonth(), 1);
+      const toDate =
+        sessionRange.length > 0 ? sessionRange[0].lastDate : new Date();
 
       // debitDoc (old logic)
       const debitDoc = await Debit.findOne({
@@ -895,7 +891,7 @@ exports.SessionEnd = async (req, res) => {
             DeductedFromAdvance: deductedFromAdvance,
             NetBilledAmount: netBilledAmount,
             startDate: startDate, // Updated to use dynamic range
-            ToDate: toDate,       // Updated to use dynamic range
+            ToDate: toDate, // Updated to use dynamic range
             month: today.toLocaleString("default", { month: "long" }),
             year: currentYear,
             TotalSessionCount: session.sessionCount,
@@ -1062,42 +1058,45 @@ exports.forceBillFirst26Sessions = async (req, res) => {
     }
 
     // 1. Get the 'Completed' status ID to ensure we only bill actual treatments
-    const completedStatus = await SessionStatus.findOne({ 
-      sessionStatusName: { $regex: /completed/i } 
+    const completedStatus = await SessionStatus.findOne({
+      sessionStatusName: { $regex: /completed/i },
     });
 
     if (!completedStatus) {
-      return res.status(404).json({ message: "Completed session status not found." });
+      return res
+        .status(404)
+        .json({ message: "Completed session status not found." });
     }
 
     // 2. Find the first 26 completed sessions (ordered by date)
     // We don't filter by isBilled here; we just take the top 26 oldest records.
     const sessionsToUpdate = await Session.find({
       patientId: patientId,
-      sessionStatusId: completedStatus._id
+      sessionStatusId: completedStatus._id,
     })
-    .sort({ sessionDate: 1 }) 
-    .limit(26)
-    .select("_id"); // We only need the IDs for the update
+      .sort({ sessionDate: 1 })
+      .limit(26)
+      .select("_id"); // We only need the IDs for the update
 
     if (sessionsToUpdate.length === 0) {
-      return res.status(200).json({ message: "No completed sessions found to bill." });
+      return res
+        .status(200)
+        .json({ message: "No completed sessions found to bill." });
     }
 
-    const ids = sessionsToUpdate.map(s => s._id);
+    const ids = sessionsToUpdate.map((s) => s._id);
 
     // 3. Force isBilled to true for these specific IDs
     const result = await Session.updateMany(
       { _id: { $in: ids } },
-      { $set: { isBilled: true } }
+      { $set: { isBilled: true } },
     );
 
     res.status(200).json({
       success: true,
       message: `Updated ${result.modifiedCount} sessions to billed status (Targeted: ${ids.length}).`,
-      totalTargeted: ids.length
+      totalTargeted: ids.length,
     });
-
   } catch (error) {
     console.error("Force Billing Error:", error);
     res.status(500).json({ message: error.message });
