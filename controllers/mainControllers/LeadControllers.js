@@ -27,6 +27,7 @@ exports.createLead = async (req, res) => {
       LeadStatusId,
       leadStatusName,
       cbDate,
+      isExternal,
     } = req.body;
     //  CHECK DUPLICATE CONTACT NUMBER
     const existingLead = await Lead.findOne({ leadContactNo });
@@ -69,6 +70,7 @@ exports.createLead = async (req, res) => {
       leadSourceId,
       leadMedicalHistory,
       leadAddress,
+      isExternal: isExternal || false,
       isQualified: isQualified || false,
       leadDocuments,
       leadSourceName,

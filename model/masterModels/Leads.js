@@ -39,6 +39,10 @@ const leadSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "LeadSource",
     },
+    isExternal: {
+      type: Boolean,
+      default: false,
+    },
     leadMedicalHistory: {
       type: String,
       trim: true,
