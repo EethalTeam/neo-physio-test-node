@@ -295,7 +295,7 @@ exports.initMonthlyBillingGeneration = () => {
 
 exports.initDailySessionGeneration = () => {
   cron.schedule(
-    // "53 15 * * 1-6",
+    // "15 3 * * 1-6",
     "00 5 * * 1-6",
     async () => {
       try {
@@ -431,7 +431,7 @@ exports.initDailySessionGeneration = () => {
 exports.initScheduledReviewGeneration = () => {
   cron.schedule(
     "30 5 * * 1-6",
-    // "44 8 * * 1-6",
+    // "17 3 * * 1-6",
 
     async () => {
       try {

@@ -22,8 +22,15 @@ exports.getIncomeByDate = async (req, res) => {
 
     const endDate = fromDate
       ? new Date(`${toDate}T23:59:59.999Z`)
-      : new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1);
-
+      : new Date(
+          new Date().getFullYear(),
+          new Date().getMonth() + 1,
+          0,
+          23,
+          59,
+          59,
+          999,
+        );
     // Load patients + fee type
     const patients = await Patients.find().populate(
       "FeesTypeId",

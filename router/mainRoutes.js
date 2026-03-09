@@ -128,11 +128,11 @@ router.post(
 );
 //ExpenseControllers
 
-router.post("/createExpense", ExpenseControllers.createExpense);
-router.post("/getAllExpense", ExpenseControllers.getAllExpense);
-router.post("/getSingleExpense", ExpenseControllers.getSingleExpense);
-router.post("/updateExpense", ExpenseControllers.updateExpense);
-router.post("/deleteExpense", ExpenseControllers.deleteExpense);
+router.post("/Expense/createExpense", ExpenseControllers.createExpense);
+router.post("/Expense/getAllExpense", ExpenseControllers.getAllExpense);
+router.post("/Expense/getSingleExpense", ExpenseControllers.getSingleExpense);
+router.post("/Expense/updateExpense", ExpenseControllers.updateExpense);
+router.post("/Expense/deleteExpense", ExpenseControllers.deleteExpense);
 
 router.post("/Session/getMonthlySummary", SessionControllers.getMonthlySummary);
 //SessionControllers
