@@ -16,7 +16,11 @@ const CreditControllers = require("../controllers/mainControllers/CreditControll
 const DebitControllers = require("../controllers/mainControllers/DebitControllers");
 const LeaveControllers = require("../controllers/mainControllers/LeaveControllers");
 const PayrollControllers = require("../controllers/mainControllers/PayrollControllers");
+const LinkControllers = require("../controllers/mainControllers/LinkControllers");
 
+
+//Link
+router.post("/Link/createSecureLink", LinkControllers.createSecureLink);
 //PAyroll
 router.post("/Payroll/createPayroll", PayrollControllers.createPayroll);
 router.post("/Payroll/getAllPayroll", PayrollControllers.getAllPayroll);
