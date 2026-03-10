@@ -8,6 +8,7 @@ const Notification = require("../../model/masterModels/Notification");
 const fs = require("fs");
 const path = require("path");
 const mongoose = require("mongoose");
+const Link = require("../../model/masterModels/Link");
 
 exports.createLead = async (req, res) => {
   try {
@@ -28,8 +29,25 @@ exports.createLead = async (req, res) => {
       leadStatusName,
       cbDate,
       isExternal,
+      sixdigit,
     } = req.body;
     //  CHECK DUPLICATE CONTACT NUMBER
+    if (isExternal) {
+      const validation = await Link.findOne({ key: sixdigit });
+
+      if (!validation) {
+        return res.status(409).json({
+          success: false,
+          message: "Invalid key Found",
+        });
+      }
+      if (validation && validation.isExpired) {
+        return res.status(409).json({
+          success: false,
+          message: "This link has been Expired",
+        });
+      }
+    }
     const existingLead = await Lead.findOne({ leadContactNo });
 
     if (existingLead) {
@@ -85,6 +103,14 @@ exports.createLead = async (req, res) => {
     const newLead = new Lead(LeadData);
 
     const savedLead = await newLead.save();
+    if (isExternal) {
+      const validation = await Link.findOne({ key: sixdigit });
+      if (!validation.isExpired) {
+        validation.isExpired = true;
+
+        await validation.save();
+      }
+    }
     res.status(201).json(savedLead);
   } catch (error) {
     if (error.code === 11000) {
