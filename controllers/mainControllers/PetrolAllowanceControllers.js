@@ -16,7 +16,6 @@ const Petrol = require("../../model/masterModels/PetrolAllowance");
 //     res.status(500).json({ message: error.message });
 //   }
 // };
-
 exports.getAllPetrol = async (req, res) => {
   try {
     const { from, to } = req.body;
@@ -31,8 +30,7 @@ exports.getAllPetrol = async (req, res) => {
 
     const petrolData = await Petrol.aggregate([
       { $match: matchStage },
-
-      // 1. Join with Physio first to ensure we always have the name
+      // 1. Join with Physio
       {
         $lookup: {
           from: "physios",
@@ -43,15 +41,10 @@ exports.getAllPetrol = async (req, res) => {
       },
       { $unwind: "$physioInfo" },
 
-      // 2. Unwind summary BUT preserve records even if summary is empty/null
-      { 
-        $unwind: { 
-          path: "$summary", 
-          preserveNullAndEmptyArrays: true 
-        } 
-      },
+      // 2. Unwind summary to get access to individual patient kms
+      { $unwind: { path: "$summary", preserveNullAndEmptyArrays: true } },
 
-      // 3. Lookup Patient Details (will be null if summary was empty)
+      // 3. Lookup Patient Details
       {
         $lookup: {
           from: "patients",
@@ -60,61 +53,55 @@ exports.getAllPetrol = async (req, res) => {
           as: "patientInfo",
         },
       },
-      { 
-        $unwind: { 
-          path: "$patientInfo", 
-          preserveNullAndEmptyArrays: true 
-        } 
-      },
+      { $unwind: { path: "$patientInfo", preserveNullAndEmptyArrays: true } },
 
-      // 4. Group by the original Petrol Document ID first 
-      // This preserves the finalDailyKms for that specific day/physio
+      // 4. Group by each Daily Record ID to calculate the CORRECT daily sum
       {
         $group: {
           _id: "$_id",
           physioId: { $first: "$physioId" },
           physioName: { $first: "$physioInfo.physioName" },
           date: { $first: "$date" },
-          finalDailyKms: { $first: "$finalDailyKms" },
           status: { $first: "$status" },
-          // Collect patient visits if they exist
-          patientVisits: {
+          // DYNAMIC CALCULATION: Summing the patient kms for this specific day
+          calculatedDailyKm: { $sum: { $ifNull: ["$summary.travelKm", 0] } },
+          patientDetails: {
             $push: {
               $cond: [
                 { $gt: ["$summary.patientId", null] },
                 {
                   patientId: "$summary.patientId",
                   patientName: "$patientInfo.patientName",
-                  km: "$summary.travelKm"
+                  km: "$summary.travelKm",
                 },
-                "$$REMOVE"
-              ]
-            }
-          }
-        }
+                "$$REMOVE",
+              ],
+            },
+          },
+        },
       },
 
-      // 5. Final Grouping: Group everything under the Physio
+      // 5. Group by Physio to calculate the Grand Total and nest the logs
       {
         $group: {
           _id: "$physioId",
           physioId: { $first: "$physioId" },
           physioName: { $first: "$physioName" },
-          // This creates the patient-wise nesting you had before
+          // Summing the correctly calculated daily KMs
+          grandTotalPhysioKm: { $sum: "$calculatedDailyKm" },
           patients: {
             $push: {
               dailyLogs: {
                 date: "$date",
-                finalDailyKms: "$finalDailyKms",
+                finalDailyKms: "$calculatedDailyKm", // Now returns 39 instead of 23
                 status: "$status",
-                patientDetails: "$patientVisits"
-              }
-            }
+                patientDetails: "$patientDetails",
+              },
+            },
           },
-          grandTotalPhysioKm: { $sum: "$finalDailyKms" }
-        }
+        },
       },
-      { $sort: { physioName: 1 } }
+      { $sort: { physioName: 1 } },
     ]);
 
     res.status(200).json(petrolData);
