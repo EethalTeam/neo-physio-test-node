@@ -17,7 +17,52 @@ const DebitControllers = require("../controllers/mainControllers/DebitController
 const LeaveControllers = require("../controllers/mainControllers/LeaveControllers");
 const PayrollControllers = require("../controllers/mainControllers/PayrollControllers");
 const LinkControllers = require("../controllers/mainControllers/LinkControllers");
+const CronJobControllers = require("../controllers/mainControllers/CronJobControllers");
 
+const SECRET = "ENIS_NEO_SECRET_KEY_2026";
+
+router.get("/morning-trigger-session", async (req, res) => {
+  if (req.query.secret !== SECRET) return res.status(401).send("Unauthorized");
+
+  // Get current day based on IST (UTC + 5:30)
+  // This ensures "Sunday" is always Sunday in India, regardless of server location.
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(now.getTime() + istOffset);
+  const dayOfWeek = istDate.getDay(); // 0 = Sunday, 1 = Monday...
+
+  // Skip if it is Sunday in India
+  if (dayOfWeek === 0) {
+    console.log("Skipping session generation: It is Sunday in IST.");
+    return res.send("Skipped: Sunday.");
+  }
+
+  try {
+    await CronJobControllers.processDailySessionGeneration();
+    res.send("Morning tasks processed.");
+  } catch (error) {
+    console.error("Cron Error:", error);
+    res.status(500).send("Error processing sessions.");
+  }
+});
+
+router.get("/morning-trigger-review", async (req, res) => {
+  if (req.query.secret !== SECRET) return res.status(401).send("Unauthorized");
+  await CronJobControllers.processScheduledReviewGeneration();
+  res.send("Morning tasks processed.");
+});
+
+router.get("/billing-trigger", async (req, res) => {
+  if (req.query.secret !== SECRET) return res.status(401).send("Unauthorized");
+  await CronJobControllers.processMonthlyBilling();
+  res.send("Month-end tasks processed.");
+});
+
+router.get("/payroll-trigger", async (req, res) => {
+  if (req.query.secret !== SECRET) return res.status(401).send("Unauthorized");
+  await CronJobControllers.processMonthlyPayroll();
+  res.send("Month-end tasks processed.");
+});
 
 //Link
 router.post("/Link/createSecureLink", LinkControllers.createSecureLink);
@@ -78,7 +123,7 @@ router.post("/Physio/loginPhysio", physioControllers.loginPhysio);
 router.post("/Physio/logoutPhysio", physioControllers.logoutPhysio);
 router.post("/Physio/logoutUser", physioControllers.logoutUser);
 router.post("/Physio/checkLogin", physioControllers.checkLogin);
-
+router.post("/Review/updateReviewDate", ReviewControllers.updateReviewDate);
 //Leave
 router.post("/LeaveControllers/saveLeavePlan", LeaveControllers.saveLeavePlan);
 router.post(
@@ -124,12 +169,7 @@ router.post(
   "/Patient/getAllPatientsByPhysioAndDate",
   PatientControllers.getAllPatientsByPhysioAndDate,
 );
-//Review
-router.post("/Review/updateReviewDate", ReviewControllers.updateReviewDate);
-router.post(
-  "/Review/getAllReviewDownload",
-  ReviewControllers.getAllReviewDownload,
-);
+
 //ExpenseControllers
 
 router.post("/Expense/createExpense", ExpenseControllers.createExpense);
