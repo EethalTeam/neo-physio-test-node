@@ -67,7 +67,7 @@ router.get("/payroll-trigger", async (req, res) => {
 router.get("/SessionPendingCheck", async (req, res) => {
   if (req.query.secret !== SECRET) return res.status(401).send("Unauthorized");
 
-   // Get current day based on IST (UTC + 5:30)
+  // Get current day based on IST (UTC + 5:30)
   // This ensures "Sunday" is always Sunday in India, regardless of server location.
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
@@ -79,9 +79,9 @@ router.get("/SessionPendingCheck", async (req, res) => {
     console.log("Skipping session generation: It is Sunday in IST.");
     return res.send("Skipped: Sunday.");
   }
- try {
+  try {
     await CronJobControllers.processSessionPendingCheck();
-  res.send("Month-end tasks processed.");
+    res.send("Month-end tasks processed.");
   } catch (error) {
     console.error("Cron Error:", error);
     res.status(500).send("Error processing sessions.");
@@ -91,7 +91,7 @@ router.get("/SessionPendingCheck", async (req, res) => {
 router.get("/processReturnJourneyAllowance", async (req, res) => {
   if (req.query.secret !== SECRET) return res.status(401).send("Unauthorized");
 
-   // Get current day based on IST (UTC + 5:30)
+  // Get current day based on IST (UTC + 5:30)
   // This ensures "Sunday" is always Sunday in India, regardless of server location.
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
@@ -103,9 +103,9 @@ router.get("/processReturnJourneyAllowance", async (req, res) => {
     console.log("Skipping session generation: It is Sunday in IST.");
     return res.send("Skipped: Sunday.");
   }
- try {
-  await CronJobControllers.processReturnJourneyAllowance();
-  res.send("Month-end tasks processed.");
+  try {
+    await CronJobControllers.processReturnJourneyAllowance();
+    res.send("Month-end tasks processed.");
   } catch (error) {
     console.error("Cron Error:", error);
     res.status(500).send("Error processing sessions.");
@@ -172,6 +172,10 @@ router.post("/Physio/logoutPhysio", physioControllers.logoutPhysio);
 router.post("/Physio/logoutUser", physioControllers.logoutUser);
 router.post("/Physio/checkLogin", physioControllers.checkLogin);
 router.post("/Review/updateReviewDate", ReviewControllers.updateReviewDate);
+router.post(
+  "/Review/getAllReviewDownload",
+  ReviewControllers.getAllReviewDownload,
+);
 //Leave
 router.post("/LeaveControllers/saveLeavePlan", LeaveControllers.saveLeavePlan);
 router.post(
