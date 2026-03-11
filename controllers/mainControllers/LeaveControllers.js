@@ -17,7 +17,7 @@ exports.markLeave = async (req, res) => {
       physioId,
       LeaveDate: date,
     });
-
+    console.log(date, "date");
     if (existingLeave) {
       return res.status(400).json({
         success: false,

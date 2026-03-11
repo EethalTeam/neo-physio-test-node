@@ -275,6 +275,7 @@ exports.getAllPatients = async (req, res) => {
       .populate("patientGenderId", "genderName")
       .populate("MedicalHistoryAndRiskFactor.RiskFactorID", "RiskFactorName")
       .populate("physioId", "physioName")
+      .populate("ReferenceId", " sourceName")
       .sort({ createdAt: -1 });
     const patientIds = patients.map((p) => p._id);
 
@@ -563,27 +564,27 @@ exports.getAllPatientsIncome = async (req, res) => {
             $lt: new Date(year, month, 1),
           },
         })
-        .populate("sessionStatusId", "sessionStatusName")
-        .populate("physioId", "physioName");
+          .populate("sessionStatusId", "sessionStatusName")
+          .populate("physioId", "physioName");
 
         // 1. Get all completed sessions first
         const completedSessions = sessions.filter(
           (s) =>
             s.sessionStatusId?.sessionStatusName &&
-            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed"
+            s.sessionStatusId.sessionStatusName.toLowerCase() === "completed",
         );
 
         // --- NEW LOGIC: Count Sessions per Physio ---
         const physioMap = {};
 
-        completedSessions.forEach(s => {
+        completedSessions.forEach((s) => {
           if (s.physioId) {
             const id = s.physioId._id.toString();
             if (!physioMap[id]) {
               physioMap[id] = {
                 physioId: id,
                 physioName: s.physioId.physioName,
-                sessionCount: 0
+                sessionCount: 0,
               };
             }
             physioMap[id].sessionCount += 1;
@@ -595,10 +596,10 @@ exports.getAllPatientsIncome = async (req, res) => {
         // --------------------------------------------
 
         const NonbilledSessions = completedSessions.filter(
-          (s) => s.isBilled === false || s.isBilled === undefined
+          (s) => s.isBilled === false || s.isBilled === undefined,
         );
         const billedSessions = completedSessions.filter(
-          (s) => s.isBilled === true
+          (s) => s.isBilled === true,
         );
 
         const totalCompleted = completedSessions.length;
@@ -627,10 +628,12 @@ exports.getAllPatientsIncome = async (req, res) => {
           _id: p._id,
           patientName: p.patientName,
           // Returns array like: [{ physioId: "...", physioName: "...", sessionCount: 5 }]
-          physioDetails: physioDetails, 
+          physioDetails: physioDetails,
           feeType: feeTypeName || "N/A",
           feePerSession:
-            feeTypeName === "PerMonth" ? Number((baseFee / 26).toFixed(2)) : baseFee,
+            feeTypeName === "PerMonth"
+              ? Number((baseFee / 26).toFixed(2))
+              : baseFee,
           totalCompletedSessions: totalCompleted,
           totalIncome: Number(totalIncome.toFixed(2)),
           totalBilled: totalBilled,
@@ -638,7 +641,7 @@ exports.getAllPatientsIncome = async (req, res) => {
           Billed: Number(Billed.toFixed(2)),
           NonBilled: Number(NonBilled.toFixed(2)),
         };
-      })
+      }),
     );
 
     res.status(200).json(result);
