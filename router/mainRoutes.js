@@ -64,6 +64,54 @@ router.get("/payroll-trigger", async (req, res) => {
   res.send("Month-end tasks processed.");
 });
 
+router.get("/SessionPendingCheck", async (req, res) => {
+  if (req.query.secret !== SECRET) return res.status(401).send("Unauthorized");
+
+   // Get current day based on IST (UTC + 5:30)
+  // This ensures "Sunday" is always Sunday in India, regardless of server location.
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(now.getTime() + istOffset);
+  const dayOfWeek = istDate.getDay(); // 0 = Sunday, 1 = Monday...
+
+  // Skip if it is Sunday in India
+  if (dayOfWeek === 0) {
+    console.log("Skipping session generation: It is Sunday in IST.");
+    return res.send("Skipped: Sunday.");
+  }
+ try {
+    await CronJobControllers.processSessionPendingCheck();
+  res.send("Month-end tasks processed.");
+  } catch (error) {
+    console.error("Cron Error:", error);
+    res.status(500).send("Error processing sessions.");
+  }
+});
+
+router.get("/processReturnJourneyAllowance", async (req, res) => {
+  if (req.query.secret !== SECRET) return res.status(401).send("Unauthorized");
+
+   // Get current day based on IST (UTC + 5:30)
+  // This ensures "Sunday" is always Sunday in India, regardless of server location.
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(now.getTime() + istOffset);
+  const dayOfWeek = istDate.getDay(); // 0 = Sunday, 1 = Monday...
+
+  // Skip if it is Sunday in India
+  if (dayOfWeek === 0) {
+    console.log("Skipping session generation: It is Sunday in IST.");
+    return res.send("Skipped: Sunday.");
+  }
+ try {
+  await CronJobControllers.processReturnJourneyAllowance();
+  res.send("Month-end tasks processed.");
+  } catch (error) {
+    console.error("Cron Error:", error);
+    res.status(500).send("Error processing sessions.");
+  }
+});
+
 //Link
 router.post("/Link/createSecureLink", LinkControllers.createSecureLink);
 //PAyroll
