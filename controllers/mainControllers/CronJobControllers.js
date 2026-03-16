@@ -311,14 +311,17 @@ exports.processMonthlyBilling = async () => {
 
     for (const item of billingData) {
       const patient = await Patient.findById(item._id).populate("FeesTypeId");
+
       if (
         !patient ||
         patient.FeesTypeId?.feesTypeName === "PerMonth" ||
         !item.physioId
-      )
+      ) {
         continue;
+      }
 
       const totalBill = (patient.feeAmount || 0) * item.count;
+
       const advPaid =
         (
           await Debit.aggregate([
@@ -326,6 +329,7 @@ exports.processMonthlyBilling = async () => {
             { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
           ])
         )[0]?.total || 0;
+
       const usedAdv =
         (
           await Bill.aggregate([
@@ -333,9 +337,10 @@ exports.processMonthlyBilling = async () => {
             { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
           ])
         )[0]?.total || 0;
+
       const deduct = Math.min(Math.max(advPaid - usedAdv, 0), totalBill);
 
-      await Bill.create({
+      const newBill = await Bill.create({
         patientId: item._id,
         physioId: item.physioId,
         paymentStatus: "Pending",
@@ -350,9 +355,15 @@ exports.processMonthlyBilling = async () => {
         month: today.toLocaleString("default", { month: "long" }),
         year: today.getFullYear(),
       });
+
       await Session.updateMany(
         { _id: { $in: item.sessions } },
-        { $set: { isBilled: true } },
+        {
+          $set: {
+            isBilled: true,
+            billId: newBill._id,
+          },
+        },
       );
     }
   } catch (err) {
@@ -459,7 +470,7 @@ exports.processMonthlyPayroll = async () => {
 
 // --- INITIALIZERS (Server.js) ---
 exports.initDailySessionGeneration = () =>
-  cron.schedule("0 5 * * 1-6", () => this.processDailySessionGeneration(), {
+  cron.schedule("38 14 * * 1-6", () => this.processDailySessionGeneration(), {
     timezone: "Asia/Kolkata",
   });
 exports.initScheduledReviewGeneration = () =>

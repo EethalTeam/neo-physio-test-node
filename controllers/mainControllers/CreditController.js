@@ -177,9 +177,17 @@ exports.payCredit = async (req, res) => {
       const pending = Number(
         (Number(bill.NetBilledAmount || 0) - bill.ReceivedAmount).toFixed(2),
       );
-      bill.paymentStatus = pending <= 0 ? "Paid" : "Partially Paid";
-      bill.isComplete = pending <= 0;
 
+      if (pending <= 0) {
+        bill.paymentStatus = "Paid";
+        bill.paymentType = "Full Payment";
+        bill.isComplete = true;
+        bill.ReceivedAmount = Number(bill.NetBilledAmount || 0); // exact match
+      } else {
+        bill.paymentStatus = "Partially Paid";
+        bill.paymentType = "Partial Payment";
+        bill.isComplete = false;
+      }
       bill.lastPaymentDate = receivedDate ? new Date(receivedDate) : new Date();
       bill.lastPaymentNotes = notes || "";
       await bill.save({ session });

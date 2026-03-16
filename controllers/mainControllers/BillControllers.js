@@ -2,6 +2,9 @@ const mongoose = require("mongoose");
 const Bill = require("../../model/masterModels/Bill");
 const Credit = require("../../model/masterModels/CreditPayment");
 const Session = require("../../model/masterModels/Session");
+const Debit = require("../../model/masterModels/DebitPayment");
+const Patient = require("../../model/masterModels/Patient");
+
 // Create a new Patient
 exports.createBill = async (req, res) => {
   try {
@@ -48,15 +51,131 @@ exports.createBill = async (req, res) => {
   }
 };
 
+const COMPLETED_STATUS_ID = "691ec69eae0e10763c8f21e0";
+
+exports.generateBillForRecoveredPatient = async (patientId) => {
+  try {
+    const patient = await Patient.findById(patientId).populate("FeesTypeId");
+    if (!patient) {
+      throw new Error("Patient not found");
+    }
+
+    const unbilledCompletedSessions = await Session.find({
+      patientId: patient._id,
+      sessionStatusId: new mongoose.Types.ObjectId(COMPLETED_STATUS_ID),
+      isBilled: false,
+    }).sort({ sessionDate: 1 });
+
+    if (!unbilledCompletedSessions.length) {
+      return {
+        success: false,
+        message: "No unbilled completed sessions found for this patient",
+      };
+    }
+
+    const physioId = unbilledCompletedSessions[0]?.physioId || patient.physioId;
+    if (!physioId) {
+      throw new Error("Physio not found for billing");
+    }
+
+    const sessionIds = unbilledCompletedSessions.map((s) => s._id);
+    const totalSessionCount = unbilledCompletedSessions.length;
+    const firstDate = unbilledCompletedSessions[0].sessionDate;
+    const lastDate =
+      unbilledCompletedSessions[unbilledCompletedSessions.length - 1]
+        .sessionDate;
+
+    let ratePerSession = 0;
+    let totalBill = 0;
+
+    const feesTypeName = patient?.FeesTypeId?.feesTypeName || "";
+
+    if (feesTypeName === "PerMonth") {
+      const totalDays = Number(
+        patient.totalSessionDays || patient.noOfDays || 0,
+      );
+      if (!totalDays || totalDays <= 0) {
+        throw new Error(
+          "Patient total session days / no of days is required for PerMonth billing",
+        );
+      }
+
+      ratePerSession = Number(patient.feeAmount || 0) / totalDays;
+      totalBill = ratePerSession * totalSessionCount;
+    } else {
+      ratePerSession = Number(patient.feeAmount || 0);
+      totalBill = ratePerSession * totalSessionCount;
+    }
+
+    const advPaid =
+      (
+        await Debit.aggregate([
+          { $match: { patientId: patient._id } },
+          { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
+        ])
+      )[0]?.total || 0;
+
+    const usedAdv =
+      (
+        await Bill.aggregate([
+          { $match: { patientId: patient._id } },
+          { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
+        ])
+      )[0]?.total || 0;
+
+    const deduct = Math.min(Math.max(advPaid - usedAdv, 0), totalBill);
+    const netBilledAmount = totalBill - deduct;
+
+    const billDate = new Date(lastDate);
+
+    const newBill = await Bill.create({
+      patientId: patient._id,
+      physioId,
+      paymentStatus: netBilledAmount <= 0 ? "Paid" : "Pending",
+      paymentType: deduct > 0 && netBilledAmount > 0 ? "Partial Payment" : "",
+      ReceivedAmount: deduct,
+      TotalBilledAmount: Number(totalBill.toFixed(2)),
+      DeductedFromAdvance: Number(deduct.toFixed(2)),
+      NetBilledAmount: Number(netBilledAmount.toFixed(2)),
+      startDate: firstDate,
+      ToDate: lastDate,
+      ratePerSession: Number(ratePerSession.toFixed(2)),
+      TotalSessionCount: totalSessionCount,
+      month: billDate.toLocaleString("default", { month: "long" }),
+      year: billDate.getFullYear(),
+      isComplete: netBilledAmount <= 0,
+    });
+
+    await Session.updateMany(
+      { _id: { $in: sessionIds } },
+      {
+        $set: {
+          isBilled: true,
+          billId: newBill._id,
+        },
+      },
+    );
+
+    return {
+      success: true,
+      message: "Bill generated successfully for recovered patient",
+      data: newBill,
+    };
+  } catch (error) {
+    throw error;
+  }
+};
+
 exports.receivePayment = async (req, res) => {
   try {
     const { receivedAmount, billId, paymentType, notes, feedback } = req.body;
 
     const bill = await Bill.findById(billId);
-    if (!bill)
+    if (!bill) {
       return res
         .status(404)
         .json({ success: false, message: "Bill not found" });
+    }
 
     const amountReceivedNow = Number(receivedAmount);
     if (!Number.isFinite(amountReceivedNow) || amountReceivedNow <= 0) {
@@ -67,32 +186,36 @@ exports.receivePayment = async (req, res) => {
 
     const today = new Date();
 
-    // ✅ correct total received
+    const netBilledAmount = Number(bill.NetBilledAmount || 0);
+
+    // keep same precision as your bill data
     const newTotalReceived = Number(
-      (Number(bill.ReceivedAmount || 0) + amountReceivedNow).toFixed(2),
+      (Number(bill.ReceivedAmount || 0) + amountReceivedNow).toFixed(3),
     );
 
-    // ✅ correct outstanding
-    const outstandingBalance = Number(
-      (Number(bill.NetBilledAmount || 0) - newTotalReceived).toFixed(2),
+    let outstandingBalance = Number(
+      (netBilledAmount - newTotalReceived).toFixed(3),
     );
+
+    // handle tiny floating precision issues
+    if (Math.abs(outstandingBalance) < 0.01) {
+      outstandingBalance = 0;
+    }
 
     bill.ReceivedAmount = newTotalReceived;
 
-    // ✅ always update status based on actual amounts
-    if (newTotalReceived >= Number(bill.NetBilledAmount || 0)) {
+    if (outstandingBalance <= 0) {
       bill.paymentStatus = "Paid";
       bill.paymentType = "Full Payment";
       bill.isComplete = true;
+      bill.ReceivedAmount = netBilledAmount; // match exactly
 
-      // optional: remove credit if exists
       await Credit.deleteMany({ BillId: bill._id });
     } else {
       bill.paymentStatus = "Partially Paid";
       bill.paymentType = "Partial Payment";
       bill.isComplete = false;
 
-      // ✅ create/update credit = outstanding
       const existingCredit = await Credit.findOne({ BillId: bill._id });
 
       if (existingCredit) {
@@ -126,10 +249,12 @@ exports.receivePayment = async (req, res) => {
       outstandingBalance,
     });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
-
 // Get all bill
 exports.getAllBill = async (req, res) => {
   try {

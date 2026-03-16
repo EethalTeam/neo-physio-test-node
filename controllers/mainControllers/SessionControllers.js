@@ -382,10 +382,8 @@ exports.getAllSessionsbyPatient = async (req, res) => {
   try {
     const { sessionDate, nextDate, physioId, storedRole, patientId } = req.body;
 
-    //ALWAYS define filter first
-    let filter = {};
+    const filter = {};
 
-    // Date filter
     if (sessionDate && nextDate) {
       filter.sessionDate = {
         $gte: new Date(sessionDate),
@@ -393,39 +391,35 @@ exports.getAllSessionsbyPatient = async (req, res) => {
       };
     }
 
-    if (patientId) {
-      const mongoose = require("mongoose");
+    if (patientId && mongoose.Types.ObjectId.isValid(patientId)) {
       filter.patientId = new mongoose.Types.ObjectId(patientId);
     }
 
-    //  Role based filter
     if (storedRole === "Physio" && physioId) {
       filter.physioId = physioId;
     }
 
     const sessions = await Session.find(filter)
+      .sort({ sessionDate: 1, createdAt: 1 })
       .populate("physioId", "physioName")
       .populate({
         path: "patientId",
         populate: { path: "patientGenderId", select: "genderName" },
       })
-      .populate("sessionFeedbackPros", "sessionFeedbackCons")
-      .populate("modalitiesList.modalityId", "modalitiesName")
-      .populate("machineId", "machineName")
       .populate(
         "sessionStatusId",
         "sessionStatusName sessionStatusColor sessionStatusTextColor",
       )
+      .populate("modalitiesList.modalityId", "modalitiesName")
+      .populate("machineId", "machineName")
       .populate("redFlags.redFlagId", "redflagName");
 
-    // Always return array
-    return res.status(200).json(sessions || []);
+    return res.status(200).json(Array.isArray(sessions) ? sessions : []);
   } catch (error) {
     console.error("Get all sessions error:", error);
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
-
 // Get a single Session by id
 exports.getSingleSession = async (req, res) => {
   try {
@@ -606,6 +600,7 @@ exports.SessionCancel = async (req, res) => {
     const statusData = await SessionStatus.findOne({
       sessionStatusName: action,
     });
+
     if (!statusData) {
       return res.status(400).json({ message: "Session Status is not found" });
     }
@@ -633,6 +628,7 @@ exports.SessionCancel = async (req, res) => {
       const io = req.app.get("socketio");
 
       const hodRole = await RoleBased.findOne({ RoleName: "HOD" });
+      const adminRole = await RoleBased.findOne({ RoleName: "Admin" });
       const superAdminRole = await RoleBased.findOne({
         RoleName: "SuperAdmin",
       });
@@ -641,34 +637,84 @@ exports.SessionCancel = async (req, res) => {
         ? await Employee.find({ roleId: hodRole._id }).select("_id")
         : [];
 
+      const adminEmployees = adminRole
+        ? await Employee.find({ roleId: adminRole._id }).select("_id")
+        : [];
+
       const superAdminEmployees = superAdminRole
         ? await Employee.find({ roleId: superAdminRole._id }).select("_id")
         : [];
 
       const notificationsToCreate = [];
 
+      const commonMessage = `Session ${cancelledSession.sessionCode} for ${
+        patient?.patientName || "Patient"
+      } has been cancelled for ${new Date(
+        cancelledSession.sessionDate,
+      ).toLocaleDateString("en-IN")}. Reason: ${
+        cancelledSession.sessionCancelReason || "No reason provided"
+      }. Cancelled by ${userRole} (${physioName}).`;
+
+      const commonMeta = {
+        SessionId: cancelledSession._id,
+        PatientId: cancelledSession.patientId,
+        PhysioId: cancelledSession.physioId,
+        Date: cancelledSession.sessionDate,
+      };
+
+      // ✅ HOD notifications
       for (const hod of hodEmployees) {
         notificationsToCreate.push({
           fromEmployeeId: cancelledSession.physioId,
           toEmployeeId: hod._id,
-          message: `Session ${cancelledSession.sessionCode} for ${
-            patient?.patientName || "Patient"
-          } has been cancelled for ${new Date(
-            cancelledSession.sessionDate,
-          ).toLocaleDateString("en-IN")}. Reason: ${
-            cancelledSession.sessionCancelReason || "No reason provided"
-          }. Cancelled by ${userRole} (${physioName}).`,
+          message: commonMessage,
           type: "Session-Cancellation",
           status: "unseen",
-          meta: {
-            SessionId: cancelledSession._id,
-            PatientId: cancelledSession.patientId,
-            PhysioId: cancelledSession.physioId,
-            Date: cancelledSession.sessionDate,
-          },
+          meta: commonMeta,
         });
       }
 
+      // ✅ Admin notifications
+      for (const admin of adminEmployees) {
+        notificationsToCreate.push({
+          fromEmployeeId: cancelledSession.physioId,
+          toEmployeeId: admin._id,
+          message: commonMessage,
+          type: "Session-Cancellation",
+          status: "unseen",
+          meta: commonMeta,
+        });
+      }
+
+      // ✅ Super Admin notifications
+      for (const superAdmin of superAdminEmployees) {
+        notificationsToCreate.push({
+          fromEmployeeId: cancelledSession.physioId,
+          toEmployeeId: superAdmin._id,
+          message: commonMessage,
+          type: "Session-Cancellation",
+          status: "unseen",
+          meta: commonMeta,
+        });
+      }
+
+      // ✅ Physio self notification
+      if (cancelledSession.physioId) {
+        notificationsToCreate.push({
+          fromEmployeeId: cancelledSession.physioId,
+          toEmployeeId: cancelledSession.physioId,
+          message: `Your session ${cancelledSession.sessionCode} for ${
+            patient?.patientName || "Patient"
+          } on ${new Date(cancelledSession.sessionDate).toLocaleDateString(
+            "en-IN",
+          )} has been marked as cancelled.`,
+          type: "Session-Cancellation",
+          status: "unseen",
+          meta: commonMeta,
+        });
+      }
+
+      // ✅ Additional petrol notification only if petrol claimed
       if (isPetrolClaimed) {
         for (const superAdmin of superAdminEmployees) {
           notificationsToCreate.push({
@@ -681,36 +727,11 @@ exports.SessionCancel = async (req, res) => {
             ).toLocaleDateString("en-IN")}. Reason: ${
               cancelledSession.sessionCancelReason || "No reason provided"
             }. Claimed KMs: ${cancelledSession.cancelledKms || 0}.`,
-            type: "Petrol-Allowance", // use this if frontend already supports it
+            type: "Petrol-Allowance",
             status: "unseen",
-            meta: {
-              SessionId: cancelledSession._id,
-              PatientId: cancelledSession.patientId,
-              PhysioId: cancelledSession.physioId,
-              Date: cancelledSession.sessionDate,
-            },
+            meta: commonMeta,
           });
         }
-      }
-
-      if (cancelledSession.physioId) {
-        notificationsToCreate.push({
-          fromEmployeeId: cancelledSession.physioId,
-          toEmployeeId: cancelledSession.physioId,
-          message: `Your session ${cancelledSession.sessionCode} for ${
-            patient?.patientName || "Patient"
-          } on ${new Date(cancelledSession.sessionDate).toLocaleDateString(
-            "en-IN",
-          )} has been marked as cancelled.`,
-          type: "Session-Cancellation",
-          status: "unseen",
-          meta: {
-            SessionId: cancelledSession._id,
-            PatientId: cancelledSession.patientId,
-            PhysioId: cancelledSession.physioId,
-            Date: cancelledSession.sessionDate,
-          },
-        });
       }
 
       const savedNotifications = await Notification.insertMany(
@@ -719,10 +740,12 @@ exports.SessionCancel = async (req, res) => {
 
       if (io && savedNotifications.length > 0) {
         savedNotifications.forEach((notification) => {
-          io.to(notification.toEmployeeId.toString()).emit(
-            "receiveNotification",
-            notification,
-          );
+          if (notification.toEmployeeId) {
+            io.to(notification.toEmployeeId.toString()).emit(
+              "receiveNotification",
+              notification,
+            );
+          }
         });
       }
     } catch (notifyErr) {

@@ -96,6 +96,11 @@ const sessionSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    billId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Bill",
+      default: null,
+    },
     modalitiesList: [
       {
         modalityId: {

@@ -3,6 +3,8 @@ const Patient = require("../../model/masterModels/Patient");
 const Session = require("../../model/masterModels/Session");
 const Counter = require("../../model/masterModels/Counter");
 const SessionModel = require("../../model/masterModels/Session");
+const Bill = require("../../model/masterModels/Bill");
+const Debit = require("../../model/masterModels/DebitPayment");
 
 // Create a new Patient
 exports.createPatients = async (req, res) => {
@@ -665,7 +667,11 @@ exports.getByPatientsName = async (req, res) => {
   }
 };
 // Update a Patients
+
 exports.updatePatients = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const {
       _id,
@@ -736,22 +742,45 @@ exports.updatePatients = async (req, res) => {
       recoveredType,
       isConsentReceived,
     } = req.body;
+
+    if (!_id) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Patient id is required" });
+    }
+
     // Validation for recovered logic
     if (isRecovered === true) {
       if (!recoveredType) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({
           message: "Recovered type is required",
         });
       }
 
       if (recoveredType === "Other" && !stopReason) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({
           message: "Stop reason is required when recovered type is Other",
         });
       }
     }
 
-    const Patients = await Patient.findByIdAndUpdate(
+    const existingPatient = await Patient.findById(_id)
+      .populate("FeesTypeId")
+      .session(session);
+
+    if (!existingPatient) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Patient not found" });
+    }
+
+    const wasRecoveredBefore = !!existingPatient.isRecovered;
+
+    const updatedPatient = await Patient.findByIdAndUpdate(
       _id,
       {
         $set: {
@@ -821,25 +850,152 @@ exports.updatePatients = async (req, res) => {
           stopReason:
             isRecovered && recoveredType === "Other" ? stopReason : null,
           recoveredType: isRecovered ? recoveredType : null,
-
           isConsentReceived,
         },
       },
-      { new: true, runValidators: true },
-    );
+      { new: true, runValidators: true, session },
+    ).populate("FeesTypeId");
 
-    if (!Patients) {
+    if (!updatedPatient) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ message: "Patients Cant able to update" });
     }
 
-    res
-      .status(200)
-      .json({ message: "Patients updated successfully", data: Patients });
+    let generatedBill = null;
+
+    // ✅ Generate bill only when patient is newly marked as recovered
+    if (isRecovered === true && wasRecoveredBefore === false) {
+      const COMPLETED_STATUS_ID = new mongoose.Types.ObjectId(
+        "691ec69eae0e10763c8f21e0",
+      );
+
+      const unbilledCompletedSessions = await Session.find({
+        patientId: updatedPatient._id,
+        sessionStatusId: COMPLETED_STATUS_ID,
+        isBilled: false,
+      })
+        .sort({ sessionDate: 1, createdAt: 1 })
+        .session(session);
+
+      if (unbilledCompletedSessions.length > 0) {
+        const sessionIds = unbilledCompletedSessions.map((s) => s._id);
+        const totalSessionCount = unbilledCompletedSessions.length;
+        const firstDate = unbilledCompletedSessions[0].sessionDate;
+        const lastDate =
+          unbilledCompletedSessions[unbilledCompletedSessions.length - 1]
+            .sessionDate;
+
+        const billPhysioId =
+          unbilledCompletedSessions[0]?.physioId || updatedPatient.physioId;
+
+        let ratePerSession = 0;
+        let totalBill = 0;
+
+        const feesTypeName = updatedPatient?.FeesTypeId?.feesTypeName || "";
+
+        if (feesTypeName === "PerMonth") {
+          const totalDays = Number(
+            updatedPatient.totalSessionDays || updatedPatient.noOfDays || 0,
+          );
+
+          if (!totalDays || totalDays <= 0) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+              message:
+                "Total session days / no of days is required for PerMonth billing",
+            });
+          }
+
+          ratePerSession = Number(updatedPatient.feeAmount || 0) / totalDays;
+          totalBill = ratePerSession * totalSessionCount;
+        } else {
+          ratePerSession = Number(updatedPatient.feeAmount || 0);
+          totalBill = ratePerSession * totalSessionCount;
+        }
+
+        const advPaidAgg = await Debit.aggregate([
+          { $match: { patientId: updatedPatient._id } },
+          { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
+        ]).session(session);
+
+        const advPaid = advPaidAgg[0]?.total || 0;
+
+        const usedAdvAgg = await Bill.aggregate([
+          { $match: { patientId: updatedPatient._id } },
+          { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
+        ]).session(session);
+
+        const usedAdv = usedAdvAgg[0]?.total || 0;
+
+        const deduct = Math.min(Math.max(advPaid - usedAdv, 0), totalBill);
+        const netBilledAmount = totalBill - deduct;
+
+        const billDate = new Date(lastDate);
+
+        generatedBill = await Bill.create(
+          [
+            {
+              patientId: updatedPatient._id,
+              physioId: billPhysioId,
+              paymentStatus: netBilledAmount <= 0 ? "Paid" : "Pending",
+              paymentType:
+                netBilledAmount <= 0
+                  ? "Full Payment"
+                  : deduct > 0
+                    ? "Partial Payment"
+                    : undefined,
+              ReceivedAmount: Number(deduct.toFixed(2)),
+              TotalBilledAmount: Number(totalBill.toFixed(2)),
+              DeductedFromAdvance: Number(deduct.toFixed(2)),
+              NetBilledAmount: Number(netBilledAmount.toFixed(2)),
+              startDate: firstDate,
+              ToDate: lastDate,
+              ratePerSession: Number(ratePerSession.toFixed(2)),
+              TotalSessionCount: totalSessionCount,
+              month: billDate.toLocaleString("default", { month: "long" }),
+              year: billDate.getFullYear(),
+              isComplete: netBilledAmount <= 0,
+            },
+          ],
+          { session },
+        );
+
+        generatedBill = generatedBill[0];
+
+        await Session.updateMany(
+          { _id: { $in: sessionIds } },
+          {
+            $set: {
+              isBilled: true,
+              billId: generatedBill._id,
+            },
+          },
+          { session },
+        );
+      }
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return res.status(200).json({
+      message:
+        isRecovered === true && wasRecoveredBefore === false
+          ? generatedBill
+            ? "Patients updated successfully and bill generated"
+            : "Patients updated successfully. No unbilled completed sessions found for billing"
+          : "Patients updated successfully",
+      data: updatedPatient,
+      bill: generatedBill || null,
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    await session.abortTransaction();
+    session.endSession();
+    return res.status(500).json({ message: error.message });
   }
 };
-
 exports.updatePatientFeedbacks = async (req, res) => {
   try {
     const { patientId, Feedback, Satisfaction } = req.body;
