@@ -30,6 +30,32 @@ exports.createCreditPayment = async (req, res) => {
         message: "Credit for this patient/month/year already exists",
       });
     }
+    const bill = await Bill.findOne({
+      patientId,
+      month: CreditMonth,
+      year: CreditYear,
+    });
+
+    if (!bill) {
+      return res.status(404).json({ message: "Bill not found" });
+    }
+
+    // ❌ Block if Bad Debt
+    if (bill.isBadDebt) {
+      return res.status(400).json({
+        message: "Cannot create credit for Bad Debt bill",
+      });
+    }
+
+    // ❌ Block if fully paid
+    const pending =
+      Number(bill.NetBilledAmount || 0) - Number(bill.ReceivedAmount || 0);
+
+    if (pending <= 0) {
+      return res.status(400).json({
+        message: "No pending amount. Credit not allowed",
+      });
+    }
 
     const credit = await CreditPayment.create({
       patientId,
@@ -54,10 +80,25 @@ exports.createCreditPayment = async (req, res) => {
 exports.getAllCreditPayment = async (req, res) => {
   try {
     const credits = await CreditPayment.find()
-      .populate("patientId", "patientName patientCode")
+      .populate({
+        path: "patientId",
+        select: "patientName patientCode",
+      })
       .sort({ createdAt: -1 });
 
-    res.status(200).json(credits);
+    // filter invalid ones
+    const validCredits = credits.filter((c) => {
+      const bill = c.BillId;
+
+      if (!bill) return false;
+
+      const pending =
+        Number(bill.NetBilledAmount || 0) - Number(bill.ReceivedAmount || 0);
+
+      return !bill.isBadDebt && pending > 0;
+    });
+
+    res.status(200).json(validCredits);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

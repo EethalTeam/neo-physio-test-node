@@ -51,6 +51,51 @@ exports.createBill = async (req, res) => {
   }
 };
 
+exports.markBadDebt = async (req, res) => {
+  try {
+    const { billId } = req.body;
+
+    if (!billId) {
+      return res.status(400).json({
+        success: false,
+        message: "Bill ID is required",
+      });
+    }
+
+    const bill = await Bill.findById(billId);
+
+    if (!bill) {
+      return res.status(404).json({
+        success: false,
+        message: "Bill not found",
+      });
+    }
+
+    if (bill.isBadDebt) {
+      return res.status(400).json({
+        success: false,
+        message: "Bill is already marked as bad debt",
+      });
+    }
+
+    bill.isBadDebt = true;
+
+    await bill.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Bill marked as bad debt successfully",
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Mark Bad Debt Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
 const COMPLETED_STATUS_ID = "691ec69eae0e10763c8f21e0";
 
 exports.generateBillForRecoveredPatient = async (patientId) => {

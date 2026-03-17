@@ -21,6 +21,10 @@ const billSchema = new mongoose.Schema(
       enum: ["Paid", "Pending", "Partially Paid"],
       default: "Pending",
     },
+    isBadDebt: {
+      type: Boolean,
+      default: false,
+    },
     ReceivedAmount: {
       type: Number,
     },
