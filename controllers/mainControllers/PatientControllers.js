@@ -5,13 +5,15 @@ const Counter = require("../../model/masterModels/Counter");
 const SessionModel = require("../../model/masterModels/Session");
 const Bill = require("../../model/masterModels/Bill");
 const Debit = require("../../model/masterModels/DebitPayment");
-
+const TreatmentCycle = require("../../model/masterModels/TreatmentCycle");
 // Create a new Patient
 exports.createPatients = async (req, res) => {
+  const dbSession = await mongoose.startSession();
+  dbSession.startTransaction();
+
   try {
     const {
       patientName,
-      patientCode,
       isActive,
       consultationDate,
       historyOfFall,
@@ -72,20 +74,14 @@ exports.createPatients = async (req, res) => {
       feeAmount,
       ReferenceId,
     } = req.body;
-    // Check for duplicates (if needed)
-    // const existingPatient = await Patient.findOne({ patientCode: patientCode });
-    // if (existingPatient) {
-    //   return res
-    //     .status(400)
-    //     .json({ message: "Patient with this code  already exists" });
-    // }
 
-    // Get the last HNP patient to continue numbering
     const existingPatient = await Patient.findOne({
       patientNumber: patientNumber,
-    });
+    }).session(dbSession);
 
     if (existingPatient) {
+      await dbSession.abortTransaction();
+      dbSession.endSession();
       return res.status(200).json({
         success: false,
         message: "EXISTING_NUMBER",
@@ -96,7 +92,8 @@ exports.createPatients = async (req, res) => {
       patientCode: { $regex: /^HNP/ },
     })
       .sort({ createdAt: -1 })
-      .limit(1);
+      .limit(1)
+      .session(dbSession);
 
     let nextId = 1;
     if (lastHnpPatient.length > 0) {
@@ -104,7 +101,6 @@ exports.createPatients = async (req, res) => {
         parseInt(lastHnpPatient[0].patientCode.replace("HNP", ""), 10) + 1;
     }
 
-    // Assign the new patientCode
     const newHnpCode = `HNP${String(nextId).padStart(6, "0")}`;
 
     const createData = {
@@ -167,25 +163,152 @@ exports.createPatients = async (req, res) => {
       reviewFrequency,
       feeAmount,
     };
-    if (ReferenceId) {
-      createData.ReferenceId = ReferenceId;
-    }
-    if (FeesTypeId) {
-      createData.FeesTypeId = FeesTypeId;
-    }
-    if (physioId) {
-      createData.physioId = physioId;
-    }
-    // Create and save the Patient
+
+    if (ReferenceId) createData.ReferenceId = ReferenceId;
+    if (FeesTypeId) createData.FeesTypeId = FeesTypeId;
+    if (physioId) createData.physioId = physioId;
+
     const patients = new Patient(createData);
-    await patients.save();
+    await patients.save({ session: dbSession });
+
+    const cycle = await TreatmentCycle.create(
+      [
+        {
+          patientId: patients._id,
+          physioId: physioId || null,
+          cycleNumber: 1,
+          cycleType: "fresh",
+          cycleStatus: "active",
+        },
+      ],
+      { session: dbSession },
+    );
+
+    patients.activeCycleId = cycle[0]._id;
+    await patients.save({ session: dbSession });
+
+    await dbSession.commitTransaction();
+    dbSession.endSession();
 
     res.status(200).json({
+      success: true,
       message: "Patient created successfully",
       data: patients._id,
+      activeCycleId: cycle[0]._id,
     });
   } catch (error) {
+    await dbSession.abortTransaction();
+    dbSession.endSession();
     res.status(500).json({ message: error.message });
+  }
+};
+exports.startFreshCycle = async (req, res) => {
+  const dbSession = await mongoose.startSession();
+  dbSession.startTransaction();
+
+  try {
+    const { patientId, physioId } = req.body;
+
+    const patient = await Patient.findById(patientId).session(dbSession);
+
+    if (!patient) {
+      await dbSession.abortTransaction();
+      dbSession.endSession();
+      return res.status(404).json({ message: "Patient not found" });
+    }
+
+    const lastCycle = await TreatmentCycle.findOne({ patientId })
+      .sort({ cycleNumber: -1 })
+      .session(dbSession);
+
+    const nextCycleNumber = lastCycle ? lastCycle.cycleNumber + 1 : 1;
+
+    const newCycle = await TreatmentCycle.create(
+      [
+        {
+          patientId,
+          physioId: physioId || patient.physioId || null,
+          cycleNumber: nextCycleNumber,
+          cycleType: "fresh",
+          cycleStatus: "active",
+        },
+      ],
+      { session: dbSession },
+    );
+
+    patient.activeCycleId = newCycle[0]._id;
+    patient.isRecovered = false;
+    patient.recoveredAt = null;
+    patient.stopReason = null;
+    patient.recoveredType = null;
+
+    await patient.save({ session: dbSession });
+
+    await dbSession.commitTransaction();
+    dbSession.endSession();
+
+    return res.status(200).json({
+      success: true,
+      message: "Fresh cycle started successfully",
+      cycle: newCycle[0],
+    });
+  } catch (error) {
+    await dbSession.abortTransaction();
+    dbSession.endSession();
+    return res.status(500).json({ message: error.message });
+  }
+};
+exports.continueOldCycle = async (req, res) => {
+  const dbSession = await mongoose.startSession();
+  dbSession.startTransaction();
+
+  try {
+    const { patientId } = req.body;
+
+    const patient = await Patient.findById(patientId).session(dbSession);
+
+    if (!patient) {
+      await dbSession.abortTransaction();
+      dbSession.endSession();
+      return res.status(404).json({ message: "Patient not found" });
+    }
+
+    const lastCycle = await TreatmentCycle.findOne({
+      patientId,
+    })
+      .sort({ cycleNumber: -1 })
+      .session(dbSession);
+
+    if (!lastCycle) {
+      await dbSession.abortTransaction();
+      dbSession.endSession();
+      return res.status(404).json({ message: "No old cycle found" });
+    }
+
+    lastCycle.cycleStatus = "active";
+    lastCycle.endDate = null;
+    await lastCycle.save({ session: dbSession });
+
+    patient.activeCycleId = lastCycle._id;
+    patient.isRecovered = false;
+    patient.recoveredAt = null;
+    patient.stopReason = null;
+    patient.recoveredType = null;
+
+    await patient.save({ session: dbSession });
+
+    await dbSession.commitTransaction();
+    dbSession.endSession();
+
+    return res.status(200).json({
+      success: true,
+      message: "Old cycle continued successfully",
+      cycle: lastCycle,
+    });
+  } catch (error) {
+    await dbSession.abortTransaction();
+    dbSession.endSession();
+    return res.status(500).json({ message: error.message });
   }
 };
 // Get all Patient
@@ -225,9 +348,8 @@ exports.createPatients = async (req, res) => {
 
 exports.getAllPatients = async (req, res) => {
   try {
-    const { targetDate, view } = req.body; // Pass date like "2026-02-02"
+    const { targetDate, view } = req.body;
 
-    // 1. One-time fix for Patient Codes (Existing logic)
     const conPatients = await Patient.find({
       patientCode: { $regex: /^CON/ },
     }).sort({ createdAt: 1 });
@@ -249,7 +371,6 @@ exports.getAllPatients = async (req, res) => {
       patientFilter.isRecovered = { $ne: true };
     }
 
-    // 2. NEW LOGIC: Filter by Session Date
     if (targetDate) {
       const startOfDay = new Date(targetDate);
       startOfDay.setHours(0, 0, 0, 0);
@@ -257,42 +378,48 @@ exports.getAllPatients = async (req, res) => {
       const endOfDay = new Date(targetDate);
       endOfDay.setHours(23, 59, 59, 999);
 
-      // Find all sessions for that day
       const sessions = await Session.find({
         sessionDate: { $gte: startOfDay, $lte: endOfDay },
       }).select("patientId");
 
-      // Extract unique Patient IDs from those sessions
       const patientIds = [
         ...new Set(sessions.map((s) => s.patientId.toString())),
       ];
 
-      // Update filter to only find these patients
       patientFilter._id = { $in: patientIds };
     }
 
-    // 3. Fetch Patients based on filter
     const patients = await Patient.find(patientFilter)
       .populate("FeesTypeId", "feesTypeName")
       .populate("patientGenderId", "genderName")
       .populate("MedicalHistoryAndRiskFactor.RiskFactorID", "RiskFactorName")
       .populate("physioId", "physioName")
-      .populate("ReferenceId", " sourceName")
+      .populate("ReferenceId", "sourceName")
       .sort({ createdAt: -1 });
-    const patientIds = patients.map((p) => p._id);
-
-    const sessionCounts = await Session.find(
-      { patientId: { $in: patientIds } },
-      "patientId sessionCount",
-    );
-    const sessionCountMap = {};
-
-    sessionCounts.forEach((s) => {
-      sessionCountMap[s.patientId.toString()] = s.sessionCount;
-    });
 
     if (!patients || patients.length === 0) {
-      return res.status(200).json([]); // Return empty array if no sessions on that date
+      return res.status(200).json([]);
+    }
+
+    const sessionCountMap = {};
+
+    for (const p of patients) {
+      let count = 0;
+
+      if (p.activeCycleId) {
+        // new cycle-based patients
+        count = await Session.countDocuments({
+          patientId: p._id,
+          cycleId: p.activeCycleId,
+        });
+      } else {
+        // old patients without cycle migration
+        count = await Session.countDocuments({
+          patientId: p._id,
+        });
+      }
+
+      sessionCountMap[p._id.toString()] = count;
     }
 
     const response = patients.map((p) => ({
@@ -301,10 +428,10 @@ exports.getAllPatients = async (req, res) => {
       sessionCount: sessionCountMap[p._id.toString()] || 0,
     }));
 
-    res.status(200).json(response);
+    return res.status(200).json(response);
   } catch (error) {
     console.error("Error in getAllPatients:", error);
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 

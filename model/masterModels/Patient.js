@@ -301,6 +301,11 @@ const patientSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Reference",
     },
+    activeCycleId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "TreatmentCycle",
+      default: null,
+    },
   },
   { timestamps: true },
 );

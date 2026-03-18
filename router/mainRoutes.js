@@ -204,6 +204,8 @@ router.post(
   "/Patient/sessionassignphysio",
   PatientControllers.sessionAssignPhysio,
 );
+router.post("/Patient/startFreshCycle", PatientControllers.startFreshCycle);
+router.post("/Patient/continueOldCycle", PatientControllers.continueOldCycle);
 router.post(
   "/Patient/updatePatientGoals",
   PatientControllers.updatePatientGoals,

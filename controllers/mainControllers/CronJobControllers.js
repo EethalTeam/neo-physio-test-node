@@ -107,12 +107,14 @@ exports.processDailySessionGeneration = async () => {
       );
       const completedCount = await Session.countDocuments({
         patientId: patient._id,
+        cycleId: patient.activeCycleId,
         sessionStatusId: completedStatusId,
       });
       const monthStart = new Date(start.getFullYear(), start.getMonth(), 1);
       const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 1);
       const monthlyCompletedCount = await Session.countDocuments({
         patientId: patient._id,
+        cycleId: patient.activeCycleId,
         sessionStatusId: completedStatusId,
         sessionDate: { $gte: monthStart, $lt: monthEnd },
       });
@@ -120,6 +122,7 @@ exports.processDailySessionGeneration = async () => {
       await Session.create({
         sessionCode: `SESS-${String(counter.seq).padStart(6, "0")}`,
         patientId: patient._id,
+        cycleId: patient.activeCycleId, // ✅ IMPORTANT
         physioId: finalPhysioId?._id || finalPhysioId,
         sessionDate: start,
         sessionDay: start.toLocaleDateString("en-IN", { weekday: "long" }),
@@ -251,9 +254,9 @@ exports.processSessionPendingCheck = async (io) => {
     const pendReviews = await Review.find({
       reviewDate: { $gte: start, $lte: end },
       reviewStatusId: { $ne: revCompId },
-    }).populate("patientId physioId");
-
-    for (const s of pendSessions)
+    }).populate("patientId physioId reviewTypeId");
+    console.log(pendReviews, "pendReviews");
+    for (const s of pendSessions) {
       await broadcastNotification(
         admins,
         `Physio - ${s.physioId?.physioName} pending session for - ${s.patientId?.patientName}`,
@@ -261,14 +264,23 @@ exports.processSessionPendingCheck = async (io) => {
         { SessionId: s._id },
         io,
       );
-    for (const r of pendReviews)
+    }
+
+    for (const r of pendReviews) {
+      console.log(
+        "Sending review notification for:",
+        r._id,
+        r.patientId?.patientName,
+      );
+
       await broadcastNotification(
         admins,
-        `(${r.physioId?.physioName}) Red-Flags review for - ${r.patientId?.patientName} is Pending`,
+        `(${r.physioId?.physioName}) ${r.reviewTypeId?.reviewTypeName || "General"} review for - ${r.patientId?.patientName} is Pending`,
         "Pending-Review",
         { ReviewId: r._id },
         io,
       );
+    }
   } catch (err) {
     console.error("8 PM Error:", err);
   }
@@ -470,7 +482,7 @@ exports.processMonthlyPayroll = async () => {
 
 // --- INITIALIZERS (Server.js) ---
 exports.initDailySessionGeneration = () =>
-  cron.schedule("38 14 * * 1-6", () => this.processDailySessionGeneration(), {
+  cron.schedule("0 5 * * 1-6", () => this.processDailySessionGeneration(), {
     timezone: "Asia/Kolkata",
   });
 exports.initScheduledReviewGeneration = () =>
