@@ -26,20 +26,20 @@ exports.createReference = async (req, res) => {
     const lastReference = await Reference.findOne(
       {},
       {},
-      { sort: { createdAt: -1 } }
+      { sort: { createdAt: -1 } },
     );
     let nextReferenceNumber = 1;
 
     if (lastReference && lastReference.sourceCode) {
       const lastNumber = parseInt(
-        lastReference.sourceCode.replace("REFERENCE", "")
+        lastReference.sourceCode.replace("REFERENCE", ""),
       );
       nextReferenceNumber = isNaN(lastNumber) ? 1 : lastNumber + 1;
     }
 
     const sourceCode = `REFERENCE${String(nextReferenceNumber).padStart(
       3,
-      "0"
+      "0",
     )}`;
 
     const Refer = new Reference({
@@ -64,7 +64,6 @@ exports.createReference = async (req, res) => {
 exports.getAllReference = async (req, res) => {
   try {
     const Refer = await Reference.find();
-    console.log(Refer, "Refer");
     res.status(200).json(Refer);
     if (!Refer) {
       return res.status(400).json({ message: "References is not find" });
@@ -114,7 +113,7 @@ exports.updateReferences = async (req, res) => {
           commissionAmount,
         },
       },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
     if (!Refer) {

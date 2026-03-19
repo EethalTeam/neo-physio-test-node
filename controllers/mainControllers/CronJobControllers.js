@@ -82,7 +82,6 @@ exports.processDailySessionGeneration = async () => {
         LeaveDate: { $gte: start, $lte: end },
         isActive: true,
       });
-      console.log(leaveRecord, "leaveRecord");
       if (leaveRecord?.SessionGenerateForLeave) {
         const reassignmentData = leaveRecord.SessionGenerateForLeave.find(
           (item) => item.patientId?.toString() === patient._id.toString(),
@@ -261,7 +260,6 @@ exports.processSessionPendingCheck = async (io) => {
       reviewDate: { $gte: start, $lte: end },
       reviewStatusId: { $ne: revCompId },
     }).populate("patientId physioId reviewTypeId");
-    console.log(pendReviews, "pendReviews");
     for (const s of pendSessions) {
       await broadcastNotification(
         admins,

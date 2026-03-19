@@ -300,14 +300,6 @@ exports.updateNotificationStatus = async (req, res) => {
           },
           { new: true, upsert: true },
         );
-
-        console.log("KM UPDATED SUCCESS", {
-          kmToAdd,
-          usedCancelledKm,
-          petrolAllowanceId: updatedPA?._id,
-          savedDate: updatedPA?.date,
-          physioId: cancelledSession.physioId,
-        });
       }
 
       // ✅ 3) Send response notification ONLY ON APPROVE

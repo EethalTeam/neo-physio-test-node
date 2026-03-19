@@ -220,8 +220,7 @@ exports.getMonthlySummary = async (req, res) => {
       physioId: new mongoose.Types.ObjectId(physioId),
       sessionDate: { $gte: startDate, $lt: endDate },
     }).populate("sessionStatusId", "sessionStatusName");
-    console.log(sessions, "sessions");
-    console.log(sessions.length, "sessions");
+
     const summary = {
       totalSessions: sessions.length,
       completedSessions: sessions.filter(
