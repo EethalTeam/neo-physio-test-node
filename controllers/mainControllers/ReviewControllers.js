@@ -135,7 +135,7 @@ exports.createRedflag = async (req, res) => {
 exports.getAllReview = async (req, res) => {
   try {
     const now = new Date();
-    
+
     // 1. Calculate the current day in India (IST)
     // IST is UTC + 5.5 hours
     const istOffset = 5.5 * 60 * 60 * 1000;
@@ -161,14 +161,16 @@ exports.getAllReview = async (req, res) => {
         $lte: finalEnd,
       },
     })
-      .populate("patientId", "patientName shortTermGoals longTermGoals isRecovered")
+      .populate(
+        "patientId",
+        "patientName shortTermGoals longTermGoals isRecovered",
+      )
       .populate("physioId", "physioName")
       .populate("reviewTypeId", "reviewTypeName")
       .populate("reviewStatusId", "reviewStatusName")
       .sort({ reviewDate: 1 });
 
     res.status(200).json(reviews);
-    
   } catch (error) {
     console.error("Error fetching reviews:", error);
     res.status(500).json({ message: error.message });
@@ -305,7 +307,7 @@ exports.updateReview = async (req, res) => {
 
             // 3. Emit via Socket.io
             if (io) {
-              io.to(admin._id.toString()).emit(
+              io.to(admin.toString()).emit(
                 "receiveNotification",
                 newNotification,
               );
