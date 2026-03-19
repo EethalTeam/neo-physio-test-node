@@ -68,7 +68,6 @@ exports.processDailySessionGeneration = async () => {
       isRecovered: false,
       sessionStartDate: { $lte: end },
     }).sort({ visitOrder: 1 });
-    console.log(start, end, "start, end");
     for (const patient of activePatients) {
       const exists = await Session.findOne({
         patientId: patient._id,
