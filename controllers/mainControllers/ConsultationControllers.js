@@ -502,7 +502,6 @@ exports.AssignPhysio = async (req, res) => {
     }
 
     const hnpPatientCode = `HNP${String(nextHnpNumber).padStart(6, "0")}`;
-    console.log(hnpPatientCode, "hnpPatientCode");
     const newPatient = new Patient({
       patientName,
       patientCode: hnpPatientCode,
@@ -564,7 +563,6 @@ exports.AssignPhysio = async (req, res) => {
       ReferenceId,
     });
     await newPatient.save();
-    console.log(newPatient, "newPatient");
 
     // const counter = await Counter.findByIdAndUpdate(
     //   { _id: "sessionCode" },

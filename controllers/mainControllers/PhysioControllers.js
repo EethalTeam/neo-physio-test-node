@@ -227,7 +227,6 @@ exports.loginPhysio = async (req, res) => {
       "roleId",
       "RoleName",
     );
-    console.log(physio, "physio");
     if (!physio) {
       return res.status(404).json({ message: "Invalid Employee Code" });
     }

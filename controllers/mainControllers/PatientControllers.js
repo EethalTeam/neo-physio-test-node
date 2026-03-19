@@ -6,6 +6,139 @@ const SessionModel = require("../../model/masterModels/Session");
 const Bill = require("../../model/masterModels/Bill");
 const Debit = require("../../model/masterModels/DebitPayment");
 const TreatmentCycle = require("../../model/masterModels/TreatmentCycle");
+
+exports.fixPatientActiveCycle = async (req, res) => {
+  try {
+    const patients = await Patient.find({});
+    let updated = 0;
+
+    for (const patient of patients) {
+      // 🔥 find latest ACTIVE cycle always
+      const cycle = await TreatmentCycle.findOne({
+        patientId: patient._id,
+        cycleStatus: "active",
+      }).sort({ createdAt: -1 });
+
+      if (!cycle) {
+        continue;
+      }
+
+      // 🔥 update if mismatch OR null
+      if (
+        !patient.activeCycleId ||
+        patient.activeCycleId.toString() !== cycle._id.toString()
+      ) {
+        patient.activeCycleId = cycle._id;
+        await patient.save();
+
+        updated++;
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "ActiveCycleId corrected",
+      updated,
+    });
+  } catch (err) {
+    console.error("Fix error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+exports.debugPatientCycles = async (req, res) => {
+  try {
+    const patients = await Patient.find({});
+
+    const result = [];
+
+    for (const patient of patients) {
+      const activeCycle = await TreatmentCycle.findOne({
+        patientId: patient._id,
+        cycleStatus: "active",
+      }).sort({ createdAt: -1 });
+
+      result.push({
+        patientId: patient._id,
+        patientName: patient.patientName,
+        currentActiveCycleId: patient.activeCycleId || null,
+        foundActiveCycleId: activeCycle?._id || null,
+        foundCycleStatus: activeCycle?.cycleStatus || null,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+exports.fixOldSessionsAndCycle = async (req, res) => {
+  try {
+    const patients = await Patient.find({});
+    let created = 0;
+    let updatedSessions = 0;
+    let assigned = 0;
+
+    for (const patient of patients) {
+      // find old sessions (without cycle)
+      const sessions = await Session.find({
+        patientId: patient._id,
+        $or: [{ cycleId: null }, { cycleId: { $exists: false } }],
+      });
+
+      // find or create cycle
+      let cycle = await TreatmentCycle.findOne({
+        patientId: patient._id,
+        cycleStatus: "active",
+      });
+
+      if (!cycle) {
+        cycle = await TreatmentCycle.create({
+          patientId: patient._id,
+          physioId: patient.physioId,
+          cycleNumber: 1,
+          cycleType: "continue", // 🔥 important
+          cycleStatus: "active",
+          startDate:
+            patient.sessionStartDate || patient.createdAt || new Date(),
+        });
+
+        created++;
+      }
+
+      // 🔥 attach old sessions to this cycle
+      if (sessions.length > 0) {
+        await Session.updateMany(
+          { _id: { $in: sessions.map((s) => s._id) } },
+          { $set: { cycleId: cycle._id } },
+        );
+
+        updatedSessions += sessions.length;
+      }
+
+      // assign active cycle
+      if (!patient.activeCycleId) {
+        patient.activeCycleId = cycle._id;
+        await patient.save();
+        assigned++;
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Old sessions linked with cycle successfully",
+      createdCycles: created,
+      updatedSessions,
+      assignedPatients: assigned,
+    });
+  } catch (err) {
+    console.error("Fix error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
 // Create a new Patient
 exports.createPatients = async (req, res) => {
   const dbSession = await mongoose.startSession();
@@ -1183,7 +1316,6 @@ exports.updatePatientGoals = async (req, res) => {
         status: "Reviewed & Completed",
         date: new Date().toISOString().split("T")[0],
       };
-      // console.log(prevGoalEntry, "prevGoalEntry");
       patient.goalLog = patient.goalLog || [];
       patient.goalLog.push(prevGoalEntry);
     }

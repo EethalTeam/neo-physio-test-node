@@ -31,7 +31,8 @@ exports.createLead = async (req, res) => {
       isExternal,
       sixdigit,
     } = req.body;
-    //  CHECK DUPLICATE CONTACT NUMBER
+
+    // CHECK EXTERNAL LINK VALIDATION
     if (isExternal) {
       const validation = await Link.findOne({ key: sixdigit });
 
@@ -41,13 +42,16 @@ exports.createLead = async (req, res) => {
           message: "Invalid key Found",
         });
       }
-      if (validation && validation.isExpired) {
+
+      if (validation.isExpired) {
         return res.status(409).json({
           success: false,
           message: "This link has been Expired",
         });
       }
     }
+
+    // CHECK DUPLICATE CONTACT NUMBER
     const existingLead = await Lead.findOne({ leadContactNo });
 
     if (existingLead) {
@@ -57,66 +61,95 @@ exports.createLead = async (req, res) => {
       });
     }
 
+    // HANDLE FILES
     let leadDocuments = [];
 
-    if (req.files) {
-      leadDocuments = req.files.map((file) => {
-        return {
-          fileName: file.originalname,
-          fileUrl: `/uploads/leads/${file.filename}`,
-          fileType: file.mimetype,
-        };
-      });
+    if (req.files && req.files.length > 0) {
+      leadDocuments = req.files.map((file) => ({
+        fileName: file.originalname,
+        fileUrl: `/uploads/leads/${file.filename}`,
+        fileType: file.mimetype,
+      }));
     }
 
+    // GENERATE LEAD CODE
     const lastLead = await Lead.findOne({}, {}, { sort: { createdAt: -1 } });
     let nextLeadNumber = 1;
 
     if (lastLead && lastLead.leadCode) {
-      const lastNumber = parseInt(lastLead.leadCode.replace("LEAD", ""));
+      const lastNumber = parseInt(lastLead.leadCode.replace("LEAD", ""), 10);
       nextLeadNumber = isNaN(lastNumber) ? 1 : lastNumber + 1;
     }
 
     const leadCode = `LEAD${String(nextLeadNumber).padStart(3, "0")}`;
-    let LeadData = {
+
+    let finalLeadSourceId = null;
+    let finalLeadSourceName = "";
+
+    // If reference exists, do not save Online
+    if (ReferenceId) {
+      finalLeadSourceId = null;
+      finalLeadSourceName = "Reference";
+    } else if (isExternal) {
+      // Force Online only when external and no reference
+      finalLeadSourceId = "690d7691af1192eb5b523d63";
+      finalLeadSourceName = "Online";
+    } else {
+      finalLeadSourceId = leadSourceId || null;
+      finalLeadSourceName = leadSourceName || "";
+    }
+
+    const LeadData = {
       leadName,
       leadCode,
       leadAge,
       leadGenderId,
       physioCategoryId,
       leadContactNo,
-      leadSourceId,
+      leadSourceId: finalLeadSourceId,
       leadMedicalHistory,
       leadAddress,
       isExternal: isExternal || false,
       isQualified: isQualified || false,
       leadDocuments,
-      leadSourceName,
-      sourceName,
+      leadSourceName: finalLeadSourceName,
+      sourceName: sourceName || "",
       LeadStatusId,
       leadStatusName,
       cbDate,
     };
+
     if (ReferenceId) {
       LeadData.ReferenceId = ReferenceId;
     }
-    const newLead = new Lead(LeadData);
 
+    const newLead = new Lead(LeadData);
     const savedLead = await newLead.save();
+
+    // EXPIRE LINK AFTER SUCCESSFUL EXTERNAL CREATION
     if (isExternal) {
       const validation = await Link.findOne({ key: sixdigit });
-      if (!validation.isExpired) {
+      if (validation && !validation.isExpired) {
         validation.isExpired = true;
-
         await validation.save();
       }
     }
-    res.status(201).json(savedLead);
+
+    return res.status(201).json(savedLead);
   } catch (error) {
+    console.error("createLead error:", error);
+
     if (error.code === 11000) {
-      return res.status(400).json({ message: "Lead code already exists." });
+      return res.status(400).json({
+        success: false,
+        message: "Lead code already exists.",
+      });
     }
-    res.status(500).json({ message: error.message });
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
@@ -193,7 +226,6 @@ exports.updateLead = async (req, res) => {
       leadGenderId,
       physioCategoryId,
       leadContactNo,
-      leadSourceId,
       leadMedicalHistory,
       leadAddress,
       isQualified: isQualified || false,
@@ -204,14 +236,20 @@ exports.updateLead = async (req, res) => {
       leadStatusName,
       cbDate,
     };
-    if (ReferenceId) {
-      LeadData.ReferenceId = ReferenceId;
+
+    // ✅ If lead source is Reference, keep leadSourceId null
+    if (leadSourceName === "Reference") {
+      LeadData.leadSourceId = null;
+      LeadData.ReferenceId = ReferenceId || null;
+    } else {
+      LeadData.leadSourceId = leadSourceId || null;
+      LeadData.ReferenceId = null;
+      LeadData.sourceName = "";
     }
+
     const lead = await Lead.findByIdAndUpdate(
       leadId,
-      {
-        $set: LeadData,
-      },
+      { $set: LeadData },
       { new: true, runValidators: true },
     );
 
@@ -227,11 +265,12 @@ exports.updateLead = async (req, res) => {
       }));
 
       lead.leadDocuments.push(...newDocuments);
+      await lead.save();
     }
-    await lead.save();
-    res.status(200).json(lead);
+
+    return res.status(200).json(lead);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 
@@ -290,7 +329,6 @@ exports.QualifyLead = async (req, res) => {
       // --- NOTIFICATION LOGIC ---
       try {
         const roleId = await RoleBased.findOne({ RoleName: "HOD" });
-        console.log(roleId, "roleId");
         if (roleId) {
           const hodEmployees = await Employee.find({ roleId: roleId._id });
           if (hodEmployees.length > 0) {
@@ -311,7 +349,6 @@ exports.QualifyLead = async (req, res) => {
                 },
               });
               await newNotification.save();
-              console.log(newNotification, "newNotification");
               if (io) {
                 io.to(hod._id.toString()).emit(
                   "receiveNotification",

@@ -118,11 +118,18 @@ exports.processDailySessionGeneration = async () => {
         sessionStatusId: completedStatusId,
         sessionDate: { $gte: monthStart, $lt: monthEnd },
       });
-
+      if (!patient.activeCycleId) {
+        console.log(
+          `❌ Skipping patient ${patient._id} - No activeCycleId found`,
+        );
+        continue;
+      }
       await Session.create({
         sessionCode: `SESS-${String(counter.seq).padStart(6, "0")}`,
         patientId: patient._id,
-        cycleId: patient.activeCycleId, // ✅ IMPORTANT
+
+        cycleId: patient.activeCycleId,
+
         physioId: finalPhysioId?._id || finalPhysioId,
         sessionDate: start,
         sessionDay: start.toLocaleDateString("en-IN", { weekday: "long" }),

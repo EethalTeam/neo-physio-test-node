@@ -211,6 +211,14 @@ router.post(
   PatientControllers.updatePatientGoals,
 );
 router.post(
+  "/Patient/fixAndCreateCycles",
+  PatientControllers.fixOldSessionsAndCycle,
+);
+router.post(
+  "/Patient/debugPatientCycles",
+  PatientControllers.debugPatientCycles,
+);
+router.post(
   "/Patient/updatePatientFeedbacks",
   PatientControllers.updatePatientFeedbacks,
 );

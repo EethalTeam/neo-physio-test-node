@@ -44,9 +44,6 @@ app.use(
 
 require("dotenv").config();
 
-// app.post('/api/chatWithGemini', (req,res)=>{
-//   console.log(req.body,"req.body")
-// })
 app.get("/privacy", (req, res) => {
   res.send(`
     <h1>Privacy Policy</h1>
@@ -211,28 +208,6 @@ async function main() {
     console.error("❌ Error connecting to MongoDB:", error.message);
   }
 }
-// const h = new Date().getHours();
-// const m = new Date().getMinutes();
-// const time = `${h}.${m}`;
-// const times = "18.24";
-// const condition = () => {
-//   if (time == times) {
-//     // const name = () => {
-//     console.log(time, "time");
-
-//     console.log(
-//       `check for Running corn ${new Date().getHours()}.${new Date().getMinutes()}.${new Date().getSeconds()}`,
-//     );
-//     // };
-//   }
-// };
-// console.log(time, "time");
-
-// const name = () => {
-//   console.log(
-//     `check for Running corn ${new Date().getHours()}.${new Date().getMinutes()}.${new Date().getSeconds()}`,
-//   );
-// };
 
 main();
 // cron.schedule("* * * * * *", condition);
