@@ -38,14 +38,22 @@ exports.createSession = async (req, res) => {
       modalities,
     } = req.body;
 
-    const completedStatusId = "691ec69eae0e10763c8f21e0";
     const createdSessions = [];
     const skippedDates = [];
 
-    const baseCompletedCount = await Session.countDocuments({
-      patientId: patientId,
-      sessionStatusId: completedStatusId,
-    }).session(mongooseSession);
+    // ✅ get patient active cycle
+    const patient = await Patient.findById(patientId).session(mongooseSession);
+
+    if (!patient) {
+      await mongooseSession.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: "Patient not found",
+      });
+    }
+
+    const cycleId = patient.activeCycleId || null;
+
     for (const dateStr of sessionDates) {
       const currentDate = new Date(dateStr);
 
@@ -70,12 +78,10 @@ exports.createSession = async (req, res) => {
         continue;
       }
 
-      // TOTAL SESSION COUNT
       const totalSessionCount = await Session.countDocuments({
-        patientId: patientId,
+        patientId,
       }).session(mongooseSession);
 
-      // MONTHLY SESSION COUNT
       const monthStart = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
@@ -89,7 +95,7 @@ exports.createSession = async (req, res) => {
       );
 
       const monthlySessionCount = await Session.countDocuments({
-        patientId: patientId,
+        patientId,
         sessionDate: { $gte: monthStart, $lt: monthEnd },
       }).session(mongooseSession);
 
@@ -105,8 +111,14 @@ exports.createSession = async (req, res) => {
         sessionCode: formattedCode,
         patientId,
         physioId,
+
+        // ✅ use patient active cycle only
+        cycleId,
+
         sessionDate: startOfDay,
-        sessionDay: startOfDay.toLocaleDateString("en-IN", { weekday: "long" }),
+        sessionDay: startOfDay.toLocaleDateString("en-IN", {
+          weekday: "long",
+        }),
 
         sessionTime,
         sessionFromTime,
@@ -125,16 +137,16 @@ exports.createSession = async (req, res) => {
         modalities,
 
         sessionCount: totalSessionCount + 1,
-        monthlySessionCount: monthlySessionCount + 1, // NEW FIELD
+        monthlySessionCount: monthlySessionCount + 1,
       });
 
       const savedSession = await newSession.save({ session: mongooseSession });
-
       createdSessions.push(savedSession);
     }
+
     await mongooseSession.commitTransaction();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: `${createdSessions.length} sessions created successfully.`,
       data: createdSessions,
@@ -146,12 +158,15 @@ exports.createSession = async (req, res) => {
       "❌ Session creation failed. Transaction rolled back:",
       error,
     );
-    res.status(500).json({ message: error.message });
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   } finally {
     mongooseSession.endSession();
   }
 };
-
 exports.resetAllSessionsBillingStatus = async (req, res) => {
   try {
     const result = await Session.updateMany({}, { $set: { isBilled: false } });
