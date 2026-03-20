@@ -20,7 +20,8 @@ const Notification = require("./model/masterModels/Notification");
 // const autoCheckoutOnDisconnect = require('./controllers/masterControllers/AttendanceControllers');
 
 const app = express();
-const PORT = 8001;
+// const PORT = 8001;
+const PORT = 8002;
 
 // app.use(bodyParser.json());
 app.use(
