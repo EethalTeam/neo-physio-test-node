@@ -168,6 +168,7 @@ exports.getAllReview = async (req, res) => {
       .populate("physioId", "physioName")
       .populate("reviewTypeId", "reviewTypeName")
       .populate("reviewStatusId", "reviewStatusName")
+      .populate("redFlags.redFlagId", "redflagName")
       .sort({ reviewDate: 1 });
 
     res.status(200).json(reviews);
