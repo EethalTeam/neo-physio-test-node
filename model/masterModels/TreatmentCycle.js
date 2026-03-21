@@ -12,7 +12,7 @@ const treatmentCycleSchema = new mongoose.Schema(
     physioId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Physio",
-      required: true,
+      // required: true,
     },
 
     cycleNumber: {
