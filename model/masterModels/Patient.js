@@ -164,6 +164,14 @@ const patientSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    physiolongTermGoals: {
+      type: String,
+      trim: true,
+    },
+    physioshortTermGoals: {
+      type: String,
+      trim: true,
+    },
     RecomTherapy: {
       type: String,
       trim: true,
