@@ -515,7 +515,7 @@ exports.AssignPhysio = async (req, res) => {
 
     const hnpPatientCode = `HNP${String(nextHnpNumber).padStart(6, "0")}`;
 
-    // Generate only activeCycleId (no TreatmentCycle table insert)
+    // Generate only activeCycleId
     const generatedCycleId = new mongoose.Types.ObjectId();
 
     const newPatient = new Patient({
@@ -535,7 +535,10 @@ exports.AssignPhysio = async (req, res) => {
       patientAltNum,
       patientAddress,
       patientPinCode,
-      patientCondition,
+
+      // store otherMedCon value into patientCondition
+      patientCondition: otherMedCon || patientCondition,
+
       physioId,
       reviewDate,
       MedicalHistoryAndRiskFactor,

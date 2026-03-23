@@ -336,6 +336,21 @@ exports.processMonthlyBilling = async () => {
         continue;
       }
 
+      const month = today.toLocaleString("default", { month: "long" });
+      const year = today.getFullYear();
+
+      // 🔴 ADD THIS CHECK
+      const existingBill = await Bill.findOne({
+        patientId: item._id,
+        month,
+        year,
+      });
+
+      if (existingBill) {
+        console.log("Bill already exists for:", patient.patientName);
+        continue; // ⛔ skip
+      }
+
       const totalBill = (patient.feeAmount || 0) * item.count;
 
       const advPaid =
@@ -368,8 +383,8 @@ exports.processMonthlyBilling = async () => {
         ToDate: item.lastDate,
         ratePerSession: patient.feeAmount,
         TotalSessionCount: item.count,
-        month: today.toLocaleString("default", { month: "long" }),
-        year: today.getFullYear(),
+        month,
+        year,
       });
 
       await Session.updateMany(
@@ -503,6 +518,7 @@ exports.initSessionCron = (io) =>
   });
 exports.initMonthlyBillingGeneration = () =>
   cron.schedule("0 8 28-31 * *", () => this.processMonthlyBilling(), {
+    // cron.schedule("39 11 23 * *", () => this.processMonthlyBilling(), {
     timezone: "Asia/Kolkata",
   });
 exports.initMonthlyPayrollCron = () =>

@@ -534,21 +534,25 @@ exports.getAllPatients = async (req, res) => {
       return res.status(200).json([]);
     }
 
+    const COMPLETED_STATUS_ID = new mongoose.Types.ObjectId(
+      "691ec69eae0e10763c8f21e0",
+    );
+
     const sessionCountMap = {};
 
     for (const p of patients) {
       let count = 0;
 
       if (p.activeCycleId) {
-        // new cycle-based patients
         count = await Session.countDocuments({
           patientId: p._id,
           cycleId: p.activeCycleId,
+          sessionStatusId: COMPLETED_STATUS_ID,
         });
       } else {
-        // old patients without cycle migration
         count = await Session.countDocuments({
           patientId: p._id,
+          sessionStatusId: COMPLETED_STATUS_ID,
         });
       }
 

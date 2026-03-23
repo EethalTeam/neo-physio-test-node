@@ -5,52 +5,149 @@ const Session = require("../../model/masterModels/Session");
 const Debit = require("../../model/masterModels/DebitPayment");
 const Patient = require("../../model/masterModels/Patient");
 
-// Create a new Patient
 exports.createBill = async (req, res) => {
   try {
-    const {
-      patientId,
-      physioId,
-      startDate,
-      ToDate,
-      ratePerSession,
-      totalAmount,
-      paymentType,
-      ReceivedAmount,
-      TotalSessionCount,
-    } = req.body;
-    // Check for duplicates (if needed)
-    const existingBill = await Bill.findOne({
-      patientId: patientId,
-    });
-    if (existingBill) {
-      return res
-        .status(400)
-        .json({ message: "Bill with this Patient  already exists" });
-    }
-    // Create and save the Patient
-    const bill = new Bill({
-      patientId,
-      physioId,
-      startDate,
-      ToDate,
-      ratePerSession,
-      ReceivedAmount,
-      paymentType,
-      totalAmount,
-      TotalSessionCount,
-    });
-    await bill.save();
+    const { patientId, month, year } = req.body;
 
-    res.status(200).json({
-      message: "Bill  created successfully",
-      data: bill._id,
+    if (!patientId || !month || !year) {
+      return res.status(400).json({
+        message: "patientId, month and year required",
+      });
+    }
+
+    // 🔒 prevent duplicate
+    const existingBill = await Bill.findOne({
+      patientId,
+      month: String(month).trim(),
+      year: Number(year),
     });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+
+    if (existingBill) {
+      return res.status(400).json({
+        message: `Bill already exists for ${month} ${year}`,
+      });
+    }
+
+    // 👉 convert month to index
+    const monthIndex = new Date(`${month} 1, ${year}`).getMonth();
+
+    if (isNaN(monthIndex)) {
+      return res.status(400).json({ message: "Invalid month" });
+    }
+
+    const startDate = new Date(year, monthIndex, 1);
+    const endDate = new Date(year, monthIndex + 1, 0, 23, 59, 59);
+
+    // 👉 same as cron aggregate but for ONE patient
+    const sessions = await Session.aggregate([
+      {
+        $match: {
+          patientId: new mongoose.Types.ObjectId(patientId),
+          sessionStatusId: new mongoose.Types.ObjectId(
+            "691ec69eae0e10763c8f21e0",
+          ),
+          sessionDate: { $gte: startDate, $lte: endDate },
+          isBilled: false,
+        },
+      },
+      {
+        $group: {
+          _id: "$patientId",
+          count: { $sum: 1 },
+          sessions: { $push: "$_id" },
+          physioId: { $first: "$physioId" },
+          firstDate: { $min: "$sessionDate" },
+          lastDate: { $max: "$sessionDate" },
+        },
+      },
+    ]);
+
+    if (!sessions.length) {
+      return res.status(400).json({
+        message: "No completed sessions found",
+      });
+    }
+
+    const item = sessions[0];
+
+    const patient = await Patient.findById(patientId).populate("FeesTypeId");
+
+    if (!patient || !item.physioId) {
+      return res.status(400).json({
+        message: "Invalid patient or physio",
+      });
+    }
+
+    const feeAmount = Number(patient.feeAmount || 0);
+    const totalBill = feeAmount * item.count;
+
+    // 👉 advance logic (same as cron)
+    const advPaid =
+      (
+        await Debit.aggregate([
+          { $match: { patientId: item._id } },
+          { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
+        ])
+      )[0]?.total || 0;
+
+    const usedAdv =
+      (
+        await Bill.aggregate([
+          { $match: { patientId: item._id } },
+          { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
+        ])
+      )[0]?.total || 0;
+
+    const deduct = Math.min(Math.max(advPaid - usedAdv, 0), totalBill);
+    const net = totalBill - deduct;
+
+    const safeTotalBill = Number((totalBill || 0).toFixed(2));
+    const safeDeduct = Number((deduct || 0).toFixed(2));
+    const safeNet = Number((net || 0).toFixed(2));
+
+    const newBill = await Bill.create({
+      patientId,
+      physioId: item.physioId,
+      paymentStatus: safeNet <= 0 ? "Paid" : "Pending",
+      paymentType:
+        safeNet <= 0
+          ? "Full Payment"
+          : safeDeduct > 0
+            ? "Partial Payment"
+            : undefined,
+      ReceivedAmount: safeDeduct,
+      TotalBilledAmount: safeTotalBill,
+      DeductedFromAdvance: safeDeduct,
+      NetBilledAmount: safeNet,
+      startDate: item.firstDate,
+      ToDate: item.lastDate,
+      ratePerSession: feeAmount,
+      TotalSessionCount: item.count,
+      month: String(month).trim(),
+      year: Number(year),
+      isComplete: safeNet <= 0,
+    });
+
+    // 👉 mark sessions billed
+    await Session.updateMany(
+      { _id: { $in: item.sessions } },
+      {
+        $set: {
+          isBilled: true,
+          billId: newBill._id,
+        },
+      },
+    );
+
+    return res.status(200).json({
+      message: "Manual bill generated successfully",
+      data: newBill,
+    });
+  } catch (err) {
+    console.error("Manual Billing Error:", err);
+    return res.status(500).json({ message: err.message });
   }
 };
-
 exports.markBadDebt = async (req, res) => {
   try {
     const { billId } = req.body;
