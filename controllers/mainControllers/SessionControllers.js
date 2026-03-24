@@ -1204,3 +1204,144 @@ exports.sessionCancelRevert = async (req, res) => {
     res.status(500).json({ error: "Revert failed" });
   }
 };
+// exports.cancelAllSessionsForPhysioLeave = async (req, res) => {
+//   try {
+//     const { physioId, sessionDate, cancelledKms = 0 } = req.body;
+
+//     if (!physioId || !sessionDate) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "physioId and sessionDate are required",
+//       });
+//     }
+
+//     const start = new Date(sessionDate);
+//     start.setHours(0, 0, 0, 0);
+
+//     const end = new Date(sessionDate);
+//     end.setHours(23, 59, 59, 999);
+
+//     const canceledStatus = await SessionStatus.findOne({
+//       sessionStatusName: "Canceled",
+//     });
+
+//     if (!canceledStatus) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Canceled session status not found",
+//       });
+//     }
+
+//     const sessions = await Session.find({
+//       physioId: new mongoose.Types.ObjectId(physioId),
+//       sessionDate: { $gte: start, $lte: end },
+//       sessionStatusId: { $ne: canceledStatus._id },
+//     });
+
+//     if (!sessions.length) {
+//       return res.status(200).json({
+//         success: true,
+//         message: "No active sessions found to cancel",
+//         updatedCount: 0,
+//       });
+//     }
+
+//     const sessionIds = sessions.map((s) => s._id);
+
+//     await Session.updateMany(
+//       { _id: { $in: sessionIds } },
+//       {
+//         $set: {
+//           sessionStatusId: canceledStatus._id,
+//           cancelledReason: "Physio Leave",
+//           cancelledKms: Number(cancelledKms) || 0,
+//           action: "Canceled",
+//         },
+//       },
+//     );
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "All today sessions canceled due to physio leave",
+//       updatedCount: sessionIds.length,
+//     });
+//   } catch (error) {
+//     return res.status(500).json({
+//       success: false,
+//       message: error.message,
+//     });
+//   }
+// };
+
+exports.reassignTodayCancelledSession = async (req, res) => {
+  try {
+    const { patientId, oldPhysioId, newPhysioId, sessionDate, sessionTime } =
+      req.body;
+
+    if (
+      !patientId ||
+      !oldPhysioId ||
+      !newPhysioId ||
+      !sessionDate ||
+      !sessionTime
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "patientId, oldPhysioId, newPhysioId, sessionDate and sessionTime are required",
+      });
+    }
+
+    const start = new Date(sessionDate);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(sessionDate);
+    end.setHours(23, 59, 59, 999);
+
+    const scheduledStatus = await SessionStatus.findOne({
+      sessionStatusName: "Scheduled",
+    });
+
+    if (!scheduledStatus) {
+      return res.status(404).json({
+        success: false,
+        message: "Scheduled status not found",
+      });
+    }
+
+    const session = await Session.findOne({
+      patientId: new mongoose.Types.ObjectId(patientId),
+      physioId: new mongoose.Types.ObjectId(oldPhysioId),
+      sessionDate: { $gte: start, $lte: end },
+    });
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: "Session not found for selected patient and date",
+      });
+    }
+
+    session.physioId = new mongoose.Types.ObjectId(newPhysioId);
+    session.sessionTime = sessionTime;
+    session.sessionStatusId = scheduledStatus._id;
+    session.sessionCancelReason = "";
+    session.sessionFeedbackCons = "";
+    session.cancelledKms = 0;
+    session.action = "Scheduled";
+
+    await session.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Session reassigned and changed to Scheduled",
+      data: session,
+    });
+  } catch (error) {
+    console.error("reassignTodayCancelledSession error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
