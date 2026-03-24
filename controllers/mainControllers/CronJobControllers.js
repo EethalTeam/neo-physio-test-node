@@ -519,6 +519,7 @@ exports.initSessionCron = (io) =>
 exports.initMonthlyBillingGeneration = () =>
   cron.schedule("0 8 28-31 * *", () => this.processMonthlyBilling(), {
     // cron.schedule("39 11 23 * *", () => this.processMonthlyBilling(), {
+    // cron.schedule("39 11 23 * *", () => this.processMonthlyBilling(), {
     timezone: "Asia/Kolkata",
   });
 exports.initMonthlyPayrollCron = () =>
