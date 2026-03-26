@@ -5,6 +5,37 @@ const Session = require("../../model/masterModels/Session");
 const Debit = require("../../model/masterModels/DebitPayment");
 const Patient = require("../../model/masterModels/Patient");
 
+const COMPLETED_STATUS_ID = "691ec69eae0e10763c8f21e0";
+
+// helper: normalize fee type from patient
+const getNormalizedFeeType = (patient) => {
+  return String(
+    patient?.FeesTypeId?.FeesTypeName ||
+      patient?.FeesTypeId?.feesTypeName ||
+      patient?.FeesTypeId?.name ||
+      patient?.FeesTypeId?.feeTypeName ||
+      "",
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+};
+
+// helper: generate next invoice number
+const getNextInvoiceNo = async () => {
+  const lastBill = await Bill.findOne({ invoiceNo: { $exists: true } })
+    .sort({ invoiceNo: -1 })
+    .select("invoiceNo");
+
+  let invoiceNo = 100001;
+
+  if (lastBill?.invoiceNo) {
+    invoiceNo = Number(lastBill.invoiceNo) + 1;
+  }
+
+  return invoiceNo;
+};
+
 exports.createBill = async (req, res) => {
   try {
     const { patientId, month, year } = req.body;
@@ -15,7 +46,6 @@ exports.createBill = async (req, res) => {
       });
     }
 
-    // 🔒 prevent duplicate
     const existingBill = await Bill.findOne({
       patientId,
       month: String(month).trim(),
@@ -28,7 +58,6 @@ exports.createBill = async (req, res) => {
       });
     }
 
-    // 👉 convert month to index
     const monthIndex = new Date(`${month} 1, ${year}`).getMonth();
 
     if (isNaN(monthIndex)) {
@@ -36,16 +65,13 @@ exports.createBill = async (req, res) => {
     }
 
     const startDate = new Date(year, monthIndex, 1);
-    const endDate = new Date(year, monthIndex + 1, 0, 23, 59, 59);
+    const endDate = new Date(year, monthIndex + 1, 0, 23, 59, 59, 999);
 
-    // 👉 same as cron aggregate but for ONE patient
     const sessions = await Session.aggregate([
       {
         $match: {
           patientId: new mongoose.Types.ObjectId(patientId),
-          sessionStatusId: new mongoose.Types.ObjectId(
-            "691ec69eae0e10763c8f21e0",
-          ),
+          sessionStatusId: new mongoose.Types.ObjectId(COMPLETED_STATUS_ID),
           sessionDate: { $gte: startDate, $lte: endDate },
           isBilled: false,
         },
@@ -78,10 +104,23 @@ exports.createBill = async (req, res) => {
       });
     }
 
-    const feeAmount = Number(patient.feeAmount || 0);
-    const totalBill = feeAmount * item.count;
+    const feeAmount = Number(patient?.feeAmount || 0);
+    const feeTypeName = getNormalizedFeeType(patient);
 
-    // 👉 advance logic (same as cron)
+    const isPerMonth = feeTypeName === "permonth";
+    const isPerSession = feeTypeName === "persession";
+
+    let totalBill = 0;
+    let ratePerSession = 0;
+
+    if (isPerMonth) {
+      totalBill = feeAmount;
+      ratePerSession = 0;
+    } else {
+      ratePerSession = feeAmount;
+      totalBill = feeAmount * item.count;
+    }
+
     const advPaid =
       (
         await Debit.aggregate([
@@ -104,9 +143,11 @@ exports.createBill = async (req, res) => {
     const safeTotalBill = Number((totalBill || 0).toFixed(2));
     const safeDeduct = Number((deduct || 0).toFixed(2));
     const safeNet = Number((net || 0).toFixed(2));
+    const invoiceNo = await getNextInvoiceNo();
 
     const newBill = await Bill.create({
       patientId,
+      invoiceNo,
       physioId: item.physioId,
       paymentStatus: safeNet <= 0 ? "Paid" : "Pending",
       paymentType:
@@ -114,21 +155,22 @@ exports.createBill = async (req, res) => {
           ? "Full Payment"
           : safeDeduct > 0
             ? "Partial Payment"
-            : undefined,
+            : "Full Payment",
       ReceivedAmount: safeDeduct,
       TotalBilledAmount: safeTotalBill,
       DeductedFromAdvance: safeDeduct,
       NetBilledAmount: safeNet,
       startDate: item.firstDate,
       ToDate: item.lastDate,
-      ratePerSession: feeAmount,
+      ratePerSession: Number(ratePerSession.toFixed(2)),
+      totalAmount: safeTotalBill,
       TotalSessionCount: item.count,
       month: String(month).trim(),
       year: Number(year),
       isComplete: safeNet <= 0,
+      feeType: isPerMonth ? "permonth" : "persession",
     });
 
-    // 👉 mark sessions billed
     await Session.updateMany(
       { _id: { $in: item.sessions } },
       {
@@ -148,6 +190,7 @@ exports.createBill = async (req, res) => {
     return res.status(500).json({ message: err.message });
   }
 };
+
 exports.markBadDebt = async (req, res) => {
   try {
     const { billId } = req.body;
@@ -174,6 +217,7 @@ exports.markBadDebt = async (req, res) => {
         message: "Bill is already marked as bad debt",
       });
     }
+
     bill.isBadDebt = true;
 
     if (bill.ReceivedAmount > 0) {
@@ -201,11 +245,10 @@ exports.markBadDebt = async (req, res) => {
   }
 };
 
-const COMPLETED_STATUS_ID = "691ec69eae0e10763c8f21e0";
-
 exports.generateBillForRecoveredPatient = async (patientId) => {
   try {
     const patient = await Patient.findById(patientId).populate("FeesTypeId");
+
     if (!patient) {
       throw new Error("Patient not found");
     }
@@ -224,6 +267,7 @@ exports.generateBillForRecoveredPatient = async (patientId) => {
     }
 
     const physioId = unbilledCompletedSessions[0]?.physioId || patient.physioId;
+
     if (!physioId) {
       throw new Error("Physio not found for billing");
     }
@@ -235,26 +279,20 @@ exports.generateBillForRecoveredPatient = async (patientId) => {
       unbilledCompletedSessions[unbilledCompletedSessions.length - 1]
         .sessionDate;
 
+    const feeAmount = Number(patient?.feeAmount || 0);
+    const feeTypeName = getNormalizedFeeType(patient);
+
+    const isPerMonth = feeTypeName === "permonth";
+
     let ratePerSession = 0;
     let totalBill = 0;
 
-    const feesTypeName = patient?.FeesTypeId?.feesTypeName || "";
-
-    if (feesTypeName === "PerMonth") {
-      const totalDays = Number(
-        patient.totalSessionDays || patient.noOfDays || 0,
-      );
-      if (!totalDays || totalDays <= 0) {
-        throw new Error(
-          "Patient total session days / no of days is required for PerMonth billing",
-        );
-      }
-
-      ratePerSession = Number(patient.feeAmount || 0) / totalDays;
-      totalBill = ratePerSession * totalSessionCount;
+    if (isPerMonth) {
+      totalBill = feeAmount;
+      ratePerSession = 0;
     } else {
-      ratePerSession = Number(patient.feeAmount || 0);
-      totalBill = ratePerSession * totalSessionCount;
+      ratePerSession = feeAmount;
+      totalBill = feeAmount * totalSessionCount;
     }
 
     const advPaid =
@@ -277,23 +315,32 @@ exports.generateBillForRecoveredPatient = async (patientId) => {
     const netBilledAmount = totalBill - deduct;
 
     const billDate = new Date(lastDate);
+    const invoiceNo = await getNextInvoiceNo();
 
     const newBill = await Bill.create({
       patientId: patient._id,
       physioId,
+      invoiceNo,
       paymentStatus: netBilledAmount <= 0 ? "Paid" : "Pending",
-      paymentType: deduct > 0 && netBilledAmount > 0 ? "Partial Payment" : "",
-      ReceivedAmount: deduct,
+      paymentType:
+        netBilledAmount <= 0
+          ? "Full Payment"
+          : deduct > 0
+            ? "Partial Payment"
+            : "Full Payment",
+      ReceivedAmount: Number(deduct.toFixed(2)),
       TotalBilledAmount: Number(totalBill.toFixed(2)),
       DeductedFromAdvance: Number(deduct.toFixed(2)),
       NetBilledAmount: Number(netBilledAmount.toFixed(2)),
       startDate: firstDate,
       ToDate: lastDate,
       ratePerSession: Number(ratePerSession.toFixed(2)),
+      totalAmount: Number(totalBill.toFixed(2)),
       TotalSessionCount: totalSessionCount,
       month: billDate.toLocaleString("default", { month: "long" }),
       year: billDate.getFullYear(),
       isComplete: netBilledAmount <= 0,
+      feeType: isPerMonth ? "permonth" : "persession",
     });
 
     await Session.updateMany(
@@ -327,6 +374,7 @@ exports.receivePayment = async (req, res) => {
     } = req.body;
 
     const bill = await Bill.findById(billId);
+
     if (!bill) {
       return res.status(404).json({
         success: false,
@@ -351,7 +399,6 @@ exports.receivePayment = async (req, res) => {
     const finalPayableBefore = Math.max(net - oldDiscount, 0);
     const pendingBefore = Math.max(finalPayableBefore - oldReceived, 0);
 
-    // ❌ validation
     if (discountNow > pendingBefore) {
       return res.status(400).json({
         success: false,
@@ -366,7 +413,6 @@ exports.receivePayment = async (req, res) => {
       });
     }
 
-    // ✅ update values
     const updatedDiscount = Number((oldDiscount + discountNow).toFixed(2));
     const updatedReceived = Number((oldReceived + receivedNow).toFixed(2));
 
@@ -380,7 +426,6 @@ exports.receivePayment = async (req, res) => {
     bill.DiscountAmount = updatedDiscount;
     bill.ReceivedAmount = updatedReceived;
 
-    // ✅ STATUS LOGIC
     if (bill.isBadDebt) {
       bill.paymentStatus = updatedReceived > 0 ? "Paid" : "Bad Debt";
       bill.paymentType = "Bad Debt";
@@ -405,7 +450,6 @@ exports.receivePayment = async (req, res) => {
 
     const today = new Date();
 
-    // ✅ CREDIT LOGIC
     if (bill.isBadDebt) {
       await Credit.deleteMany({ BillId: bill._id });
     } else if (outstanding > 0) {
@@ -456,24 +500,21 @@ exports.receivePayment = async (req, res) => {
     });
   }
 };
-// Get all bill
+
 exports.getAllBill = async (req, res) => {
   try {
     const { month, year, patientId } = req.body;
 
     const query = {};
 
-    // filter by bill month
     if (month && month !== "ALL") {
       query.month = String(month).trim();
     }
 
-    // filter by bill year
     if (year && year !== "ALL") {
       query.year = Number(year);
     }
 
-    // optional patient filter
     if (patientId && patientId !== "ALL") {
       query.patientId = patientId;
     }
@@ -489,7 +530,6 @@ exports.getAllBill = async (req, res) => {
   }
 };
 
-// Delete a bill
 exports.deleteBill = async (req, res) => {
   try {
     const { _id } = req.body;
@@ -509,6 +549,7 @@ exports.deleteBill = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 exports.updateSendStatus = async (req, res) => {
   try {
     const { billId } = req.body;
@@ -527,19 +568,21 @@ exports.updateSendStatus = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 exports.deleteAllBillsAndResetSessions = async (req, res) => {
   try {
-    // 1) delete all bills
     const billResult = await Bill.deleteMany({});
 
-    // 2) reset sessions billed flag (only completed sessions)
-    const completedStatusId = new mongoose.Types.ObjectId(
-      "691ec69eae0e10763c8f21e0",
-    );
+    const completedStatusId = new mongoose.Types.ObjectId(COMPLETED_STATUS_ID);
 
     const sessionResult = await Session.updateMany(
       { sessionStatusId: completedStatusId, isBilled: true },
-      { $set: { isBilled: false } },
+      {
+        $set: {
+          isBilled: false,
+          billId: null,
+        },
+      },
     );
 
     return res.status(200).json({
