@@ -174,8 +174,16 @@ exports.markBadDebt = async (req, res) => {
         message: "Bill is already marked as bad debt",
       });
     }
-
     bill.isBadDebt = true;
+
+    if (bill.ReceivedAmount > 0) {
+      bill.paymentStatus = "Paid";
+    } else {
+      bill.paymentStatus = "Bad Debt";
+    }
+
+    bill.paymentType = "Bad Debt";
+    bill.isComplete = bill.ReceivedAmount > 0;
 
     await bill.save();
 
@@ -310,87 +318,138 @@ exports.generateBillForRecoveredPatient = async (patientId) => {
 
 exports.receivePayment = async (req, res) => {
   try {
-    const { receivedAmount, billId, paymentType, notes, feedback } = req.body;
+    const {
+      receivedAmount = 0,
+      discountAmount = 0,
+      billId,
+      notes,
+      feedback,
+    } = req.body;
 
     const bill = await Bill.findById(billId);
     if (!bill) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Bill not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Bill not found",
+      });
     }
 
-    const amountReceivedNow = Number(receivedAmount);
-    if (!Number.isFinite(amountReceivedNow) || amountReceivedNow <= 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid receivedAmount" });
+    const receivedNow = Number(receivedAmount);
+    const discountNow = Number(discountAmount);
+
+    if (receivedNow < 0 || discountNow < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid amounts",
+      });
+    }
+
+    const net = Number(bill.NetBilledAmount || 0);
+    const oldReceived = Number(bill.ReceivedAmount || 0);
+    const oldDiscount = Number(bill.DiscountAmount || 0);
+
+    const finalPayableBefore = Math.max(net - oldDiscount, 0);
+    const pendingBefore = Math.max(finalPayableBefore - oldReceived, 0);
+
+    // ❌ validation
+    if (discountNow > pendingBefore) {
+      return res.status(400).json({
+        success: false,
+        message: "Discount cannot exceed pending amount",
+      });
+    }
+
+    if (receivedNow > pendingBefore) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment cannot exceed pending amount",
+      });
+    }
+
+    // ✅ update values
+    const updatedDiscount = Number((oldDiscount + discountNow).toFixed(2));
+    const updatedReceived = Number((oldReceived + receivedNow).toFixed(2));
+
+    const finalPayable = Math.max(net - updatedDiscount, 0);
+    let outstanding = Number((finalPayable - updatedReceived).toFixed(2));
+
+    if (Math.abs(outstanding) < 0.01) {
+      outstanding = 0;
+    }
+
+    bill.DiscountAmount = updatedDiscount;
+    bill.ReceivedAmount = updatedReceived;
+
+    // ✅ STATUS LOGIC
+    if (bill.isBadDebt) {
+      bill.paymentStatus = updatedReceived > 0 ? "Paid" : "Bad Debt";
+      bill.paymentType = "Bad Debt";
+      bill.isComplete = updatedReceived > 0;
+    } else if (outstanding === 0) {
+      bill.paymentStatus = "Paid";
+      bill.paymentType = "Full Payment";
+      bill.isComplete = true;
+    } else if (updatedReceived > 0) {
+      bill.paymentStatus = "Partially Paid";
+      bill.paymentType = "Partial Payment";
+      bill.isComplete = false;
+    } else if (updatedDiscount > 0) {
+      bill.paymentStatus = "Pending";
+      bill.paymentType = "Discount";
+      bill.isComplete = false;
+    } else {
+      bill.paymentStatus = "Pending";
+      bill.paymentType = "Pending";
+      bill.isComplete = false;
     }
 
     const today = new Date();
 
-    const netBilledAmount = Number(bill.NetBilledAmount || 0);
-
-    // keep same precision as your bill data
-    const newTotalReceived = Number(
-      (Number(bill.ReceivedAmount || 0) + amountReceivedNow).toFixed(3),
-    );
-
-    let outstandingBalance = Number(
-      (netBilledAmount - newTotalReceived).toFixed(3),
-    );
-
-    // handle tiny floating precision issues
-    if (Math.abs(outstandingBalance) < 0.01) {
-      outstandingBalance = 0;
-    }
-
-    bill.ReceivedAmount = newTotalReceived;
-
-    if (outstandingBalance <= 0) {
-      bill.paymentStatus = "Paid";
-      bill.paymentType = "Full Payment";
-      bill.isComplete = true;
-      bill.ReceivedAmount = netBilledAmount; // match exactly
-
+    // ✅ CREDIT LOGIC
+    if (bill.isBadDebt) {
       await Credit.deleteMany({ BillId: bill._id });
-    } else {
-      bill.paymentStatus = "Partially Paid";
-      bill.paymentType = "Partial Payment";
-      bill.isComplete = false;
-
+    } else if (outstanding > 0) {
       const existingCredit = await Credit.findOne({ BillId: bill._id });
 
       if (existingCredit) {
-        existingCredit.CreditAmount = outstandingBalance;
+        existingCredit.CreditAmount = outstanding;
         existingCredit.CreditDate = today;
         existingCredit.Creditfeedback =
           feedback || existingCredit.Creditfeedback || "";
         existingCredit.Creditnotes = notes || existingCredit.Creditnotes || "";
+
         await existingCredit.save();
       } else {
         await Credit.create({
           BillId: bill._id,
           patientId: bill.patientId,
-          CreditAmount: outstandingBalance,
+          CreditAmount: outstanding,
           CreditDate: today,
           CreditMonth: today.getMonth() + 1,
           CreditYear: today.getFullYear(),
           Creditdescription: `Outstanding balance from Bill ${bill.month} - ${bill.year}`,
           Creditfeedback: feedback || "",
-          Creditnotes: notes || "System generated from partial payment",
+          Creditnotes:
+            notes ||
+            (discountNow > 0
+              ? "System generated after discount"
+              : "System generated from partial payment"),
         });
       }
+    } else {
+      await Credit.deleteMany({ BillId: bill._id });
     }
 
     await bill.save();
 
     return res.status(200).json({
       success: true,
-      message: "Payment recorded",
+      message: "Payment recorded successfully",
       data: bill,
-      outstandingBalance,
+      outstandingBalance: outstanding,
     });
   } catch (error) {
+    console.error("receivePayment error:", error);
     return res.status(500).json({
       success: false,
       message: error.message,

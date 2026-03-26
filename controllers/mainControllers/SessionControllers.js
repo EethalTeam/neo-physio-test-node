@@ -12,6 +12,8 @@ const Counter = require("../../model/masterModels/Counter");
 const Notification = require("../../model/masterModels/Notification");
 const Bill = require("../../model/masterModels/Bill");
 const Debit = require("../../model/masterModels/DebitPayment");
+const Payroll = require("../../model/masterModels/Payroll");
+
 // Create a new Session
 exports.createSession = async (req, res) => {
   const mongooseSession = await mongoose.startSession();
@@ -219,41 +221,151 @@ exports.resetAllSessionsBillingStatus = async (req, res) => {
 //     res.status(500).json({ message: error.message });
 //   }
 // };
-
 exports.getMonthlySummary = async (req, res) => {
   try {
     const { physioId, month, year } = req.body;
 
     if (!physioId || !month || !year) {
-      return res.status(400).json({ message: "Missing required fields" });
+      return res.status(400).json({
+        success: false,
+        message: "physioId, month and year are required",
+      });
     }
 
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 1);
+    const selectedMonth = Number(month); // 1 to 12
+    const selectedYear = Number(year);
+
+    if (
+      Number.isNaN(selectedMonth) ||
+      Number.isNaN(selectedYear) ||
+      selectedMonth < 1 ||
+      selectedMonth > 12
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid month or year",
+      });
+    }
+
+    const physioObjectId = new mongoose.Types.ObjectId(physioId);
+
+    // Selected month sessions
+    const startDate = new Date(selectedYear, selectedMonth - 1, 1);
+    const endDate = new Date(selectedYear, selectedMonth, 1);
 
     const sessions = await Session.find({
-      physioId: new mongoose.Types.ObjectId(physioId),
+      physioId: physioObjectId,
       sessionDate: { $gte: startDate, $lt: endDate },
     }).populate("sessionStatusId", "sessionStatusName");
 
-    const summary = {
-      totalSessions: sessions.length,
-      completedSessions: sessions.filter(
-        (s) => s.sessionStatusId?.sessionStatusName === "Completed",
-      ).length,
-      cancelledSessions: sessions.filter(
-        (s) => s.sessionStatusId?.sessionStatusName === "Canceled",
-      ).length,
-      upcomingSessions: sessions.filter((s) =>
-        ["Scheduled", "Attended"].includes(
-          s.sessionStatusId?.sessionStatusName,
-        ),
-      ).length,
-    };
+    const completedSessions = sessions.filter(
+      (s) => s.sessionStatusId?.sessionStatusName === "Completed",
+    ).length;
 
-    res.status(200).json(summary);
+    const cancelledSessions = sessions.filter(
+      (s) => s.sessionStatusId?.sessionStatusName === "Canceled",
+    ).length;
+
+    const upcomingSessions = sessions.filter((s) =>
+      ["Scheduled", "Attended"].includes(s.sessionStatusId?.sessionStatusName),
+    ).length;
+
+    const monthNames = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
+
+    const selectedMonthName = monthNames[selectedMonth - 1];
+
+    // last month payroll
+    let payrollMonth = selectedMonth - 1;
+    let payrollYear = selectedYear;
+
+    if (payrollMonth === 0) {
+      payrollMonth = 12;
+      payrollYear = selectedYear - 1;
+    }
+
+    const payrollMonthName = monthNames[payrollMonth - 1];
+
+    // salary visible only after 10th of selected month
+    const today = new Date();
+    const salaryVisibleDate = new Date(selectedYear, selectedMonth - 1, 10);
+
+    let payrollDoc = null;
+    let monthlySalary = 0;
+    let salaryVisible = false;
+
+    const isPastMonth =
+      selectedYear < today.getFullYear() ||
+      (selectedYear === today.getFullYear() &&
+        selectedMonth < today.getMonth() + 1);
+
+    const isCurrentMonth =
+      selectedYear === today.getFullYear() &&
+      selectedMonth === today.getMonth() + 1;
+
+    const isFutureMonth =
+      selectedYear > today.getFullYear() ||
+      (selectedYear === today.getFullYear() &&
+        selectedMonth > today.getMonth() + 1);
+
+    // Rules:
+    // past month -> salary visible
+    // current month -> visible only after 10th
+    // future month -> not visible
+    if (isPastMonth || (isCurrentMonth && today >= salaryVisibleDate)) {
+      salaryVisible = true;
+
+      payrollDoc = await Payroll.findOne({
+        physioId: physioObjectId,
+        payrRollYear: payrollYear,
+        $or: [
+          { payrRollMonth: String(payrollMonth) },
+          { payrRollMonth: payrollMonthName },
+          {
+            payrRollMonth: {
+              $regex: new RegExp(`^${payrollMonthName}$`, "i"),
+            },
+          },
+        ],
+      }).lean();
+
+      monthlySalary = Number(payrollDoc?.NetSalary || 0);
+    }
+
+    return res.status(200).json({
+      success: true,
+      totalSessions: sessions.length,
+      completedSessions,
+      cancelledSessions,
+      upcomingSessions,
+      monthlySalary,
+      salaryVisible,
+      salaryVisibleAfter: salaryVisibleDate,
+      payrollMonth,
+      payrollMonthName,
+      payrollYear,
+      selectedMonth,
+      selectedMonthName,
+      selectedYear,
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("getMonthlySummary error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Internal server error",
+    });
   }
 };
 

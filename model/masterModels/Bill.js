@@ -14,16 +14,26 @@ const billSchema = new mongoose.Schema(
     },
     paymentType: {
       type: String,
-      enum: ["Full Payment", "Partial Payment"],
+      enum: [
+        "Full Payment",
+        "Partial Payment",
+        "Discount",
+        "Bad Debt",
+        "Pending",
+      ],
+      default: "Pending",
     },
     paymentStatus: {
       type: String,
-      enum: ["Paid", "Pending", "Partially Paid"],
+      enum: ["Pending", "Partially Paid", "Paid", "Bad Debt"],
       default: "Pending",
     },
     isBadDebt: {
       type: Boolean,
       default: false,
+    },
+    DiscountAmount: {
+      type: Number,
     },
     ReceivedAmount: {
       type: Number,
