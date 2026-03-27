@@ -59,6 +59,201 @@ async function broadcastNotification(admins, message, type, meta, io) {
 
 // --- CORE PROCESS FUNCTIONS ---
 
+// exports.processDailySessionGeneration = async () => {
+//   try {
+//     const { start, end } = getISTDateRange();
+
+//     const completedStatusId = "691ec69eae0e10763c8f21e0";
+//     const pendingStatusId = "691ecb36b87c5c57dead47a7";
+
+//     // skip Sunday fully
+//     if (start.getDay() === 0) {
+//       console.log("⏭ Sunday - session generation skipped.");
+//       return;
+//     }
+
+//     const activePatients = await Patient.find({
+//       isRecovered: false,
+//       sessionStartDate: { $lte: end },
+//     }).sort({ visitOrder: 1 });
+
+//     const isSameDay = (d1, d2) => {
+//       const a = new Date(d1);
+//       const b = new Date(d2);
+
+//       return (
+//         a.getFullYear() === b.getFullYear() &&
+//         a.getMonth() === b.getMonth() &&
+//         a.getDate() === b.getDate()
+//       );
+//     };
+
+//     const getNextWorkingDay = (date) => {
+//       const d = new Date(date);
+//       d.setHours(0, 0, 0, 0);
+
+//       do {
+//         d.setDate(d.getDate() + 1);
+//       } while (d.getDay() === 0);
+
+//       return d;
+//     };
+
+//     const getFrequencyNumber = (patient) => {
+//       return Number(
+//         patient.Frequency ??
+//           patient.frequency ??
+//           patient.sessionFrequency ??
+//           patient.visitFrequency ??
+//           6,
+//       );
+//     };
+
+//     // for frequency = 3
+//     // builds pattern like Mon-Wed-Fri / Tue-Thu-Sat based on sessionStartDate
+//     const getThreeDayPattern = (sessionStartDate) => {
+//       const first = new Date(sessionStartDate);
+//       first.setHours(0, 0, 0, 0);
+
+//       while (first.getDay() === 0) {
+//         first.setDate(first.getDate() + 1);
+//       }
+
+//       const pattern = [first.getDay()];
+
+//       let second = getNextWorkingDay(first); // skip one working day
+//       second = getNextWorkingDay(second); // actual next session day
+//       pattern.push(second.getDay());
+
+//       let third = getNextWorkingDay(second); // skip one working day
+//       third = getNextWorkingDay(third); // actual next session day
+//       pattern.push(third.getDay());
+
+//       return pattern;
+//     };
+
+//     const shouldGenerateToday = (patient, today) => {
+//       const frequency = getFrequencyNumber(patient);
+
+//       // 6 days => every day except Sunday
+//       if (frequency === 6) {
+//         return today.getDay() !== 0;
+//       }
+
+//       // 3 days => fixed weekly pattern from sessionStartDate
+//       if (frequency === 3) {
+//         const sessionStartDate = new Date(patient.sessionStartDate);
+//         sessionStartDate.setHours(0, 0, 0, 0);
+
+//         const patternDays = getThreeDayPattern(sessionStartDate);
+//         return patternDays.includes(today.getDay());
+//       }
+
+//       // fallback
+//       return today.getDay() !== 0;
+//     };
+
+//     for (const patient of activePatients) {
+//       if (!patient.activeCycleId) {
+//         console.log(
+//           `❌ Skipping patient ${patient._id} - No activeCycleId found`,
+//         );
+//         continue;
+//       }
+
+//       const exists = await Session.findOne({
+//         patientId: patient._id,
+//         cycleId: patient.activeCycleId,
+//         sessionDate: { $gte: start, $lte: end },
+//       });
+
+//       if (exists) continue;
+
+//       const sessionStartDate = new Date(patient.sessionStartDate);
+//       sessionStartDate.setHours(0, 0, 0, 0);
+
+//       if (start < sessionStartDate) {
+//         continue;
+//       }
+
+//       const shouldCreate = shouldGenerateToday(patient, start);
+
+//       if (!shouldCreate) {
+//         console.log(
+//           `⏭ Skipping patient ${patient._id} - today is not valid for frequency ${getFrequencyNumber(patient)}`,
+//         );
+//         continue;
+//       }
+
+//       let finalPhysioId = patient.physioId;
+//       let finalSessionTime = patient.sessionTime;
+
+//       const leaveRecord = await LeaveModel.findOne({
+//         physioId: patient.physioId,
+//         LeaveDate: { $gte: start, $lte: end },
+//         isActive: true,
+//       });
+
+//       if (leaveRecord?.SessionGenerateForLeave) {
+//         const reassignmentData = leaveRecord.SessionGenerateForLeave.find(
+//           (item) => item.patientId?.toString() === patient._id.toString(),
+//         );
+
+//         if (reassignmentData?.Re_Assign) {
+//           finalPhysioId = reassignmentData.Re_Assign;
+//           finalSessionTime =
+//             reassignmentData.sessionTime || patient.sessionTime;
+//         } else {
+//           console.log(
+//             `Skipping session for patient ${patient._id} because physio is on leave and no reassignment found`,
+//           );
+//           continue;
+//         }
+//       }
+
+//       const counter = await Counter.findOneAndUpdate(
+//         { _id: "sessionCode" },
+//         { $inc: { seq: 1 } },
+//         { new: true, upsert: true },
+//       );
+
+//       const completedCount = await Session.countDocuments({
+//         patientId: patient._id,
+//         cycleId: patient.activeCycleId,
+//         sessionStatusId: completedStatusId,
+//       });
+
+//       const monthStart = new Date(start.getFullYear(), start.getMonth(), 1);
+//       const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+
+//       const monthlyCompletedCount = await Session.countDocuments({
+//         patientId: patient._id,
+//         cycleId: patient.activeCycleId,
+//         sessionStatusId: completedStatusId,
+//         sessionDate: { $gte: monthStart, $lt: monthEnd },
+//       });
+
+//       await Session.create({
+//         sessionCode: `SESS-${String(counter.seq).padStart(6, "0")}`,
+//         patientId: patient._id,
+//         cycleId: patient.activeCycleId,
+//         physioId: finalPhysioId?._id || finalPhysioId,
+//         sessionDate: start,
+//         sessionDay: start.toLocaleDateString("en-IN", { weekday: "long" }),
+//         sessionTime: finalSessionTime,
+//         targetArea: patient.targetedArea,
+//         sessionStatusId: pendingStatusId,
+//         sessionCount: completedCount + 1,
+//         monthlySessionCount: monthlyCompletedCount + 1,
+//         modeOfExercise: "General",
+//       });
+//     }
+
+//     console.log("✅ 5 AM: Sessions Generated.");
+//   } catch (err) {
+//     console.error("5AM Error:", err);
+//   }
+// };
 exports.processDailySessionGeneration = async () => {
   try {
     const { start, end } = getISTDateRange();
@@ -66,7 +261,7 @@ exports.processDailySessionGeneration = async () => {
     const completedStatusId = "691ec69eae0e10763c8f21e0";
     const pendingStatusId = "691ecb36b87c5c57dead47a7";
 
-    // skip Sunday fully
+    // Skip Sunday fully
     if (start.getDay() === 0) {
       console.log("⏭ Sunday - session generation skipped.");
       return;
@@ -77,176 +272,115 @@ exports.processDailySessionGeneration = async () => {
       sessionStartDate: { $lte: end },
     }).sort({ visitOrder: 1 });
 
-    const isSameDay = (d1, d2) => {
-      const a = new Date(d1);
-      const b = new Date(d2);
-
-      return (
-        a.getFullYear() === b.getFullYear() &&
-        a.getMonth() === b.getMonth() &&
-        a.getDate() === b.getDate()
-      );
-    };
-
-    const getNextWorkingDay = (date) => {
-      const d = new Date(date);
-      d.setHours(0, 0, 0, 0);
-
-      do {
-        d.setDate(d.getDate() + 1);
-      } while (d.getDay() === 0);
-
-      return d;
-    };
-
-    const getFrequencyNumber = (patient) => {
-      return Number(
-        patient.Frequency ??
-          patient.frequency ??
-          patient.sessionFrequency ??
-          patient.visitFrequency ??
-          6,
-      );
-    };
-
-    // for frequency = 3
-    // builds pattern like Mon-Wed-Fri / Tue-Thu-Sat based on sessionStartDate
-    const getThreeDayPattern = (sessionStartDate) => {
-      const first = new Date(sessionStartDate);
-      first.setHours(0, 0, 0, 0);
-
-      while (first.getDay() === 0) {
-        first.setDate(first.getDate() + 1);
-      }
-
-      const pattern = [first.getDay()];
-
-      let second = getNextWorkingDay(first); // skip one working day
-      second = getNextWorkingDay(second); // actual next session day
-      pattern.push(second.getDay());
-
-      let third = getNextWorkingDay(second); // skip one working day
-      third = getNextWorkingDay(third); // actual next session day
-      pattern.push(third.getDay());
-
-      return pattern;
-    };
-
-    const shouldGenerateToday = (patient, today) => {
-      const frequency = getFrequencyNumber(patient);
-
-      // 6 days => every day except Sunday
-      if (frequency === 6) {
-        return today.getDay() !== 0;
-      }
-
-      // 3 days => fixed weekly pattern from sessionStartDate
-      if (frequency === 3) {
-        const sessionStartDate = new Date(patient.sessionStartDate);
-        sessionStartDate.setHours(0, 0, 0, 0);
-
-        const patternDays = getThreeDayPattern(sessionStartDate);
-        return patternDays.includes(today.getDay());
-      }
-
-      // fallback
-      return today.getDay() !== 0;
-    };
-
     for (const patient of activePatients) {
-      if (!patient.activeCycleId) {
-        console.log(
-          `❌ Skipping patient ${patient._id} - No activeCycleId found`,
-        );
-        continue;
-      }
-
-      const exists = await Session.findOne({
-        patientId: patient._id,
-        cycleId: patient.activeCycleId,
-        sessionDate: { $gte: start, $lte: end },
-      });
-
-      if (exists) continue;
-
-      const sessionStartDate = new Date(patient.sessionStartDate);
-      sessionStartDate.setHours(0, 0, 0, 0);
-
-      if (start < sessionStartDate) {
-        continue;
-      }
-
-      const shouldCreate = shouldGenerateToday(patient, start);
-
-      if (!shouldCreate) {
-        console.log(
-          `⏭ Skipping patient ${patient._id} - today is not valid for frequency ${getFrequencyNumber(patient)}`,
-        );
-        continue;
-      }
-
-      let finalPhysioId = patient.physioId;
-      let finalSessionTime = patient.sessionTime;
-
-      const leaveRecord = await LeaveModel.findOne({
-        physioId: patient.physioId,
-        LeaveDate: { $gte: start, $lte: end },
-        isActive: true,
-      });
-
-      if (leaveRecord?.SessionGenerateForLeave) {
-        const reassignmentData = leaveRecord.SessionGenerateForLeave.find(
-          (item) => item.patientId?.toString() === patient._id.toString(),
-        );
-
-        if (reassignmentData?.Re_Assign) {
-          finalPhysioId = reassignmentData.Re_Assign;
-          finalSessionTime =
-            reassignmentData.sessionTime || patient.sessionTime;
-        } else {
+      try {
+        // active cycle mandatory
+        if (!patient.activeCycleId) {
           console.log(
-            `Skipping session for patient ${patient._id} because physio is on leave and no reassignment found`,
+            `❌ Skipping patient ${patient._id} - No activeCycleId found`,
           );
           continue;
         }
+
+        // don't create duplicate session for same day
+        const exists = await Session.findOne({
+          patientId: patient._id,
+          cycleId: patient.activeCycleId,
+          sessionDate: { $gte: start, $lte: end },
+        });
+
+        if (exists) {
+          console.log(
+            `⏭ Session already exists for patient ${patient._id} on this date`,
+          );
+          continue;
+        }
+
+        const sessionStartDate = new Date(patient.sessionStartDate);
+        sessionStartDate.setHours(0, 0, 0, 0);
+
+        // don't create before patient start date
+        if (start < sessionStartDate) {
+          console.log(
+            `⏭ Skipping patient ${patient._id} - sessionStartDate not reached`,
+          );
+          continue;
+        }
+
+        let finalPhysioId = patient.physioId;
+        let finalSessionTime = patient.sessionTime;
+
+        // Check physio leave and reassignment
+        const leaveRecord = await LeaveModel.findOne({
+          physioId: patient.physioId,
+          LeaveDate: { $gte: start, $lte: end },
+          isActive: true,
+        });
+
+        if (leaveRecord?.SessionGenerateForLeave) {
+          const reassignmentData = leaveRecord.SessionGenerateForLeave.find(
+            (item) => item.patientId?.toString() === patient._id.toString(),
+          );
+
+          if (reassignmentData?.Re_Assign) {
+            finalPhysioId = reassignmentData.Re_Assign;
+            finalSessionTime =
+              reassignmentData.sessionTime || patient.sessionTime;
+          } else {
+            console.log(
+              `⏭ Skipping patient ${patient._id} - physio on leave and no reassignment found`,
+            );
+            continue;
+          }
+        }
+
+        // Session code counter
+        const counter = await Counter.findOneAndUpdate(
+          { _id: "sessionCode" },
+          { $inc: { seq: 1 } },
+          { new: true, upsert: true },
+        );
+
+        // Total completed session count for this cycle
+        const completedCount = await Session.countDocuments({
+          patientId: patient._id,
+          cycleId: patient.activeCycleId,
+          sessionStatusId: completedStatusId,
+        });
+
+        // Monthly completed session count for this cycle
+        const monthStart = new Date(start.getFullYear(), start.getMonth(), 1);
+        const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+
+        const monthlyCompletedCount = await Session.countDocuments({
+          patientId: patient._id,
+          cycleId: patient.activeCycleId,
+          sessionStatusId: completedStatusId,
+          sessionDate: { $gte: monthStart, $lt: monthEnd },
+        });
+
+        await Session.create({
+          sessionCode: `SESS-${String(counter.seq).padStart(6, "0")}`,
+          patientId: patient._id,
+          cycleId: patient.activeCycleId,
+          physioId: finalPhysioId?._id || finalPhysioId,
+          sessionDate: start,
+          sessionDay: start.toLocaleDateString("en-IN", { weekday: "long" }),
+          sessionTime: finalSessionTime,
+          targetArea: patient.targetedArea,
+          sessionStatusId: pendingStatusId,
+          sessionCount: completedCount + 1,
+          monthlySessionCount: monthlyCompletedCount + 1,
+          modeOfExercise: "General",
+        });
+
+        console.log(`✅ Session created for patient ${patient._id}`);
+      } catch (patientErr) {
+        console.error(
+          `❌ Error while creating session for patient ${patient._id}:`,
+          patientErr,
+        );
       }
-
-      const counter = await Counter.findOneAndUpdate(
-        { _id: "sessionCode" },
-        { $inc: { seq: 1 } },
-        { new: true, upsert: true },
-      );
-
-      const completedCount = await Session.countDocuments({
-        patientId: patient._id,
-        cycleId: patient.activeCycleId,
-        sessionStatusId: completedStatusId,
-      });
-
-      const monthStart = new Date(start.getFullYear(), start.getMonth(), 1);
-      const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 1);
-
-      const monthlyCompletedCount = await Session.countDocuments({
-        patientId: patient._id,
-        cycleId: patient.activeCycleId,
-        sessionStatusId: completedStatusId,
-        sessionDate: { $gte: monthStart, $lt: monthEnd },
-      });
-
-      await Session.create({
-        sessionCode: `SESS-${String(counter.seq).padStart(6, "0")}`,
-        patientId: patient._id,
-        cycleId: patient.activeCycleId,
-        physioId: finalPhysioId?._id || finalPhysioId,
-        sessionDate: start,
-        sessionDay: start.toLocaleDateString("en-IN", { weekday: "long" }),
-        sessionTime: finalSessionTime,
-        targetArea: patient.targetedArea,
-        sessionStatusId: pendingStatusId,
-        sessionCount: completedCount + 1,
-        monthlySessionCount: monthlyCompletedCount + 1,
-        modeOfExercise: "General",
-      });
     }
 
     console.log("✅ 5 AM: Sessions Generated.");
@@ -254,7 +388,6 @@ exports.processDailySessionGeneration = async () => {
     console.error("5AM Error:", err);
   }
 };
-
 exports.processScheduledReviewGeneration = async () => {
   try {
     const [typeDefault, statusPending] = await Promise.all([
@@ -828,7 +961,7 @@ exports.processMonthlyPayroll = async () => {
 
 // --- INITIALIZERS (Server.js) ---
 exports.initDailySessionGeneration = () =>
-  cron.schedule("58 16 * * 1-6", () => this.processDailySessionGeneration(), {
+  cron.schedule("00 5 * * 1-6", () => this.processDailySessionGeneration(), {
     timezone: "Asia/Kolkata",
   });
 exports.initScheduledReviewGeneration = () =>
