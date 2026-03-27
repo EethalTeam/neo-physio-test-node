@@ -309,20 +309,24 @@ exports.processMonthlyBilling = async () => {
     const year = today.getFullYear();
 
     // helper for invoice no
-    const getNextInvoiceNo = async () => {
-      const lastBill = await Bill.findOne({ invoiceNo: { $exists: true } })
-        .sort({ invoiceNo: -1 })
-        .select("invoiceNo");
+    // const getNextInvoiceNo = async () => {
+    //   const lastBill = await Bill.findOne({ invoiceNo: { $exists: true } })
+    //     .sort({ invoiceNo: -1 })
+    //     .select("invoiceNo");
 
-      let invoiceNo = 100001;
+    //   let invoiceNo = 100001;
 
-      if (lastBill?.invoiceNo) {
-        invoiceNo = Number(lastBill.invoiceNo) + 1;
-      }
+    //   if (lastBill?.invoiceNo) {
+    //     invoiceNo = Number(lastBill.invoiceNo) + 1;
+    //   }
 
-      return invoiceNo;
-    };
-
+    //   return invoiceNo;
+    // };
+const counter = await Counter.findOneAndUpdate(
+        { _id: "invoiceNo" },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true },
+      );
     // helper for fee type
     const getNormalizedFeeType = (patient) => {
       return String(
@@ -448,7 +452,8 @@ exports.processMonthlyBilling = async () => {
         const deduct = Math.min(availableAdvance, totalBill);
         const netBilledAmount = totalBill - deduct;
 
-        const invoiceNo = await getNextInvoiceNo();
+        // const invoiceNo = await getNextInvoiceNo();
+        const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`
 
         const newBill = await Bill.create({
           patientId,
