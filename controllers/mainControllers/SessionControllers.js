@@ -1226,6 +1226,11 @@ exports.SessionEnd = async (req, res) => {
       modalitiesList,
       sessionToTime,
     };
+    const counter = await Counter.findOneAndUpdate(
+      { _id: "invoiceNo" },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true },
+    );
     if (machineId) sessionUpdateData.machineId = machineId;
 
     // 2) Resolve Status
@@ -1276,11 +1281,12 @@ exports.SessionEnd = async (req, res) => {
           },
         },
       ]).session(mongooseSession);
-
+      console.log(unbilledData, "unbilledData");
       const unbilledCount = unbilledData.length > 0 ? unbilledData[0].count : 0;
-
+      console.log(unbilledCount, "unbilledCount");
       // Logic: Trigger if count is 26, 52, 78, etc.
       if (unbilledCount > 0 && unbilledCount % 26 === 0) {
+        console.log("26th session");
         const today = new Date();
         const currentMonth = today.getMonth() + 1;
         const currentYear = today.getFullYear();
@@ -1327,12 +1333,15 @@ exports.SessionEnd = async (req, res) => {
 
         if (debitDoc && deductedFromAdvance > 0) {
           debitDoc.DebitAmount = Number(
-            (Number(debitDoc.DebitAmount || 0) - deductedFromAdvance).toFixed(2),
+            (Number(debitDoc.DebitAmount || 0) - deductedFromAdvance).toFixed(
+              2,
+            ),
           );
           debitDoc.DebitDate = new Date();
           await debitDoc.save({ session: mongooseSession });
         }
-
+        const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
+        console.log(invoiceNo, "invoiceNo");
         // --- Generate Bill ---
         await Bill.create(
           [
@@ -1341,6 +1350,7 @@ exports.SessionEnd = async (req, res) => {
               physioId: session.physioId,
               paymentType: "Partial Payment",
               paymentStatus,
+              invoiceNo,
               TotalBilledAmount: totalBilledAmount,
               DeductedFromAdvance: deductedFromAdvance,
               NetBilledAmount: netBilledAmount,

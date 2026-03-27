@@ -4,7 +4,7 @@ const Credit = require("../../model/masterModels/CreditPayment");
 const Session = require("../../model/masterModels/Session");
 const Debit = require("../../model/masterModels/DebitPayment");
 const Patient = require("../../model/masterModels/Patient");
-
+const Counter = require("../../model/masterModels/Counter");
 const COMPLETED_STATUS_ID = "691ec69eae0e10763c8f21e0";
 
 // helper: normalize fee type from patient
@@ -21,25 +21,14 @@ const getNormalizedFeeType = (patient) => {
     .replace(/\s+/g, "");
 };
 
-// helper: generate next invoice number
-const getNextInvoiceNo = async () => {
-  const lastBill = await Bill.findOne({ invoiceNo: { $exists: true } })
-    .sort({ invoiceNo: -1 })
-    .select("invoiceNo");
-
-  let invoiceNo = 100001;
-
-  if (lastBill?.invoiceNo) {
-    invoiceNo = Number(lastBill.invoiceNo) + 1;
-  }
-
-  return invoiceNo;
-};
-
 exports.createBill = async (req, res) => {
   try {
     const { patientId, month, year } = req.body;
-
+    const counter = await Counter.findOneAndUpdate(
+      { _id: "invoiceNo" },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true },
+    );
     if (!patientId || !month || !year) {
       return res.status(400).json({
         message: "patientId, month and year required",
@@ -143,7 +132,7 @@ exports.createBill = async (req, res) => {
     const safeTotalBill = Number((totalBill || 0).toFixed(2));
     const safeDeduct = Number((deduct || 0).toFixed(2));
     const safeNet = Number((net || 0).toFixed(2));
-    const invoiceNo = await getNextInvoiceNo();
+    const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
 
     const newBill = await Bill.create({
       patientId,
@@ -248,7 +237,11 @@ exports.markBadDebt = async (req, res) => {
 exports.generateBillForRecoveredPatient = async (patientId) => {
   try {
     const patient = await Patient.findById(patientId).populate("FeesTypeId");
-
+    const counter = await Counter.findOneAndUpdate(
+      { _id: "invoiceNo" },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true },
+    );
     if (!patient) {
       throw new Error("Patient not found");
     }
@@ -315,7 +308,7 @@ exports.generateBillForRecoveredPatient = async (patientId) => {
     const netBilledAmount = totalBill - deduct;
 
     const billDate = new Date(lastDate);
-    const invoiceNo = await getNextInvoiceNo();
+    const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
 
     const newBill = await Bill.create({
       patientId: patient._id,
