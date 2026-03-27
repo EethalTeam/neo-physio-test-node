@@ -539,7 +539,7 @@ exports.getAllPatients = async (req, res) => {
     );
 
     const sessionCountMap = {};
-      const totalSessionCountMap = {};
+    const totalSessionCountMap = {};
     for (const p of patients) {
       let count = 0;
       let totalSessionCount = 0;
@@ -1459,7 +1459,82 @@ exports.AssignPhysio = async (req, res) => {
       kmsFromPrevious,
     } = req.body;
 
-    const AssignPhysio = await Patient.findByIdAndUpdate(
+    // -----------------------------
+    // Basic validation
+    // -----------------------------
+    if (!_id || !mongoose.Types.ObjectId.isValid(_id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid patient id is required",
+      });
+    }
+
+    if (!physioId || !mongoose.Types.ObjectId.isValid(physioId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid physioId is required",
+      });
+    }
+
+    if (!visitOrder && visitOrder !== 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Visit order is required",
+      });
+    }
+
+    const numericVisitOrder = Number(visitOrder);
+
+    if (Number.isNaN(numericVisitOrder) || numericVisitOrder <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Visit order must be greater than 0",
+      });
+    }
+
+    if (numericVisitOrder > 7) {
+      return res.status(400).json({
+        success: false,
+        message: "Visit order cannot exceed 7",
+      });
+    }
+
+    if (
+      numericVisitOrder > 1 &&
+      (kmsFromPrevious === "" ||
+        kmsFromPrevious === null ||
+        kmsFromPrevious === undefined)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Kms from previous is required when visit order is greater than 1",
+      });
+    }
+
+    // -----------------------------
+    // Duplicate visitOrder check
+    // same physio + not recovered
+    // exclude current patient
+    // -----------------------------
+    const duplicateVisitOrder = await Patient.findOne({
+      _id: { $ne: _id },
+      physioId: new mongoose.Types.ObjectId(physioId),
+      visitOrder: numericVisitOrder,
+      isRecovered: false,
+    });
+
+    if (duplicateVisitOrder) {
+      return res.status(400).json({
+        success: false,
+        message: `Visit order ${numericVisitOrder} already assigned to another patient for this physio`,
+      });
+    }
+
+    // -----------------------------
+    // Update patient
+    // -----------------------------
+    const updatedPatient = await Patient.findByIdAndUpdate(
       _id,
       {
         $set: {
@@ -1471,88 +1546,36 @@ exports.AssignPhysio = async (req, res) => {
           physioId,
           goalDescription,
           reviewFrequency,
-          visitOrder,
+          visitOrder: numericVisitOrder,
           KmsfromHub,
           KmsfLPatienttoHub,
           kmsFromPrevious,
         },
       },
       { new: true, runValidators: true },
-    );
+    )
+      .populate("physioId", "physioName")
+      .populate("patientGenderId", "genderName")
+      .populate("ReferenceId", "sourceName");
 
-    if (!AssignPhysio) {
-      return res
-        .status(400)
-        .json({ message: "AssignPhysio Cant able to update" });
+    if (!updatedPatient) {
+      return res.status(400).json({
+        success: false,
+        message: "Unable to update patient physio assignment",
+      });
     }
 
-    // const counter = await Counter.findByIdAndUpdate(
-    //   { _id: "sessionCode" },
-    //   { $inc: { seq: totalSessionDays } },
-    //   { new: true, upsert: true },
-    // );
-
-    // let nextSequenceNumber = counter.seq - totalSessionDays + 1;
-
-    // let currentDate = new Date(sessionStartDate);
-    // currentDate.setHours(12, 0, 0, 0);
-
-    // const sessionsToCreate = [];
-    // let sessionsGenerated = 0;
-
-    // const daysOfWeek = [
-    //   "Sunday",
-    //   "Monday",
-    //   "Tuesday",
-    //   "Wednesday",
-    //   "Thursday",
-    //   "Friday",
-    //   "Saturday",
-    // ];
-
-    // while (sessionsGenerated < totalSessionDays) {
-    //   const currentDayIndex = currentDate.getDay();
-
-    //   // Skip Sunday
-    //   if (currentDayIndex === 0) {
-    //     currentDate.setDate(currentDate.getDate() + 1);
-    //     continue;
-    //   }
-    //   const formattedCode = `SESS-${String(nextSequenceNumber).padStart(
-    //     6,
-    //     "0",
-    //   )}`;
-
-    //   sessionsToCreate.push({
-    //     patientId: _id,
-    //     physioId: physioId,
-    //     sessionDate: new Date(currentDate),
-    //     sessionTime: sessionTime,
-    //     sessionStatusId: new mongoose.Types.ObjectId(
-    //       "691ecb36b87c5c57dead47a7",
-    //     ),
-    //     sessionDay: daysOfWeek[currentDayIndex],
-    //     sessionCode: formattedCode,
-    //   });
-
-    //   // Increment our local counters
-    //   sessionsGenerated++;
-    //   nextSequenceNumber++; // Move to the next number for the loop
-
-    //   currentDate.setDate(currentDate.getDate() + 1);
-    // }
-
-    // if (sessionsToCreate.length > 0) {
-    //   await Session.insertMany(sessionsToCreate);
-    // }
-
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       message: "Physio Assigned",
-      AssignPhysio: AssignPhysio,
+      AssignPhysio: updatedPatient,
     });
   } catch (error) {
     console.error("Error assigning physio:", error);
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Something went wrong",
+    });
   }
 };
 

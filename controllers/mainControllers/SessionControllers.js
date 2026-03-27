@@ -43,7 +43,7 @@ exports.createSession = async (req, res) => {
     const createdSessions = [];
     const skippedDates = [];
 
-    // ✅ get patient active cycle
+    //  get patient active cycle
     const patient = await Patient.findById(patientId).session(mongooseSession);
 
     if (!patient) {
@@ -96,11 +96,15 @@ exports.createSession = async (req, res) => {
         1,
       );
 
-      const monthlySessionCount = await Session.countDocuments({
-        patientId,
-        sessionDate: { $gte: monthStart, $lt: monthEnd },
+      const completedStatus = await SessionStatus.findOne({
+        sessionStatusName: "Completed",
       }).session(mongooseSession);
 
+      const monthlySessionCount = await Session.countDocuments({
+        patientId,
+        sessionDate: { $gte: monthStart, $lte: endOfDay }, // include today
+      });
+      console.log(monthlySessionCount, "monthlySessionCount");
       const counter = await Counter.findOneAndUpdate(
         { _id: "sessionCode" },
         { $inc: { seq: 1 } },
@@ -114,7 +118,7 @@ exports.createSession = async (req, res) => {
         patientId,
         physioId,
 
-        // ✅ use patient active cycle only
+        // use patient active cycle only
         cycleId,
 
         sessionDate: startOfDay,
@@ -441,6 +445,8 @@ exports.getAllSessions = async (req, res) => {
     if (storedRole === "Physio" && physioId) {
       filter.physioId = physioId;
     }
+
+    // filter.sessionStatusId = sessionCompletedId;
 
     const sessions = await Session.find(filter)
       .populate("physioId", "physioName")
@@ -1248,8 +1254,38 @@ exports.SessionEnd = async (req, res) => {
       { $set: sessionUpdateData },
       { new: true, runValidators: true, session: mongooseSession },
     );
-
     if (!session) throw new Error("Session not found");
+
+    // ===== MONTHLY SESSION COUNT UPDATE =====
+    if (Status.sessionStatusName === "Completed") {
+      const sessionDateObj = new Date(session.sessionDate);
+
+      const monthStart = new Date(
+        sessionDateObj.getFullYear(),
+        sessionDateObj.getMonth(),
+        1,
+      );
+
+      const monthEnd = new Date(
+        sessionDateObj.getFullYear(),
+        sessionDateObj.getMonth() + 1,
+        1,
+      );
+
+      const completedStatus = await SessionStatus.findOne({
+        sessionStatusName: "Completed",
+      }).session(mongooseSession);
+
+      const monthlyCompletedCount = await Session.countDocuments({
+        patientId: session.patientId,
+        cycleId: session.cycleId,
+        sessionDate: { $gte: monthStart, $lt: monthEnd },
+        sessionStatusId: completedStatus._id,
+      }).session(mongooseSession);
+
+      session.monthlySessionCount = monthlyCompletedCount;
+      await session.save({ session: mongooseSession });
+    }
 
     // 4) Fetch Patient and FeesType
     const patient = await Patient.findById(session.patientId)

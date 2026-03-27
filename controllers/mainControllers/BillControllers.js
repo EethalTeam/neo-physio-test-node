@@ -35,17 +35,17 @@ exports.createBill = async (req, res) => {
       });
     }
 
-    const existingBill = await Bill.findOne({
-      patientId,
-      month: String(month).trim(),
-      year: Number(year),
-    });
+    // const existingBill = await Bill.findOne({
+    //   patientId,
+    //   month: String(month).trim(),
+    //   year: Number(year),
+    // });
 
-    if (existingBill) {
-      return res.status(400).json({
-        message: `Bill already exists for ${month} ${year}`,
-      });
-    }
+    // if (existingBill) {
+    //   return res.status(400).json({
+    //     message: `Bill already exists for ${month} ${year}`,
+    //   });
+    // }
 
     const monthIndex = new Date(`${month} 1, ${year}`).getMonth();
 

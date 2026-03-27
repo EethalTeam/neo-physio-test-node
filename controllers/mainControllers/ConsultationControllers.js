@@ -382,9 +382,10 @@ exports.revertConsultation = async (req, res) => {
 
 exports.AssignPhysio = async (req, res) => {
   const dbSession = await mongoose.startSession();
-  dbSession.startTransaction();
 
   try {
+    dbSession.startTransaction();
+
     const {
       _id,
       sessionStartDate,
@@ -402,20 +403,101 @@ exports.AssignPhysio = async (req, res) => {
       kmsFromPrevious,
     } = req.body;
 
-    const existingPatient = await Patient.findOne({
-      patientNumber: consultationNumber,
-    }).session(dbSession);
-
-    if (existingPatient) {
+    // -----------------------------
+    // Basic validation
+    // -----------------------------
+    if (!_id) {
       await dbSession.abortTransaction();
       dbSession.endSession();
-
       return res.status(400).json({
         success: false,
-        message: "Patient with this mobile number already exists",
+        message: "Consultation id is required",
       });
     }
 
+    if (!physioId || !mongoose.Types.ObjectId.isValid(physioId)) {
+      await dbSession.abortTransaction();
+      dbSession.endSession();
+      return res.status(400).json({
+        success: false,
+        message: "Valid physioId is required",
+      });
+    }
+
+    if (
+      visitOrder === undefined ||
+      visitOrder === null ||
+      visitOrder === "" ||
+      Number(visitOrder) <= 0
+    ) {
+      await dbSession.abortTransaction();
+      dbSession.endSession();
+      return res.status(400).json({
+        success: false,
+        message: "Valid visitOrder is required",
+      });
+    }
+
+    const numericVisitOrder = Number(visitOrder);
+
+    // -----------------------------
+    // Get consultation first
+    // -----------------------------
+    const consultation = await Consultation.findById(_id).session(dbSession);
+
+    if (!consultation) {
+      await dbSession.abortTransaction();
+      dbSession.endSession();
+      return res.status(404).json({
+        success: false,
+        message: "Consultation not found",
+      });
+    }
+
+    // -----------------------------
+    // Duplicate visitOrder check
+    // same physio + active patient + not recovered
+    // -----------------------------
+    const duplicateVisitOrder = await Patient.findOne({
+      physioId: new mongoose.Types.ObjectId(physioId),
+      visitOrder: numericVisitOrder,
+      isRecovered: false,
+    }).session(dbSession);
+
+    if (duplicateVisitOrder) {
+      await dbSession.abortTransaction();
+      dbSession.endSession();
+      return res.status(400).json({
+        success: false,
+        message: `Visit order ${numericVisitOrder} already assigned to another patient for this physio`,
+      });
+    }
+
+    // -----------------------------
+    // Duplicate patient check
+    // use consultation patient number
+    // -----------------------------
+    const consultationPatientNumber =
+      consultationNumber || consultation.patientNumber;
+
+    if (consultationPatientNumber) {
+      const existingPatient = await Patient.findOne({
+        patientNumber: consultationPatientNumber,
+      }).session(dbSession);
+
+      if (existingPatient) {
+        await dbSession.abortTransaction();
+        dbSession.endSession();
+        return res.status(400).json({
+          success: false,
+          message: "Patient with this mobile number already exists",
+        });
+      }
+    }
+
+    // -----------------------------
+    // Update consultation
+    // -----------------------------
     const updatedConsultation = await Consultation.findByIdAndUpdate(
       _id,
       {
@@ -428,7 +510,7 @@ exports.AssignPhysio = async (req, res) => {
           physioId,
           goalDescription,
           reviewFrequency,
-          visitOrder,
+          visitOrder: numericVisitOrder,
           KmsfromHub,
           KmsfLPatienttoHub,
           kmsFromPrevious,
@@ -444,7 +526,6 @@ exports.AssignPhysio = async (req, res) => {
     if (!updatedConsultation) {
       await dbSession.abortTransaction();
       dbSession.endSession();
-
       return res.status(400).json({
         success: false,
         message: "Consultation not found or update failed",
@@ -499,7 +580,9 @@ exports.AssignPhysio = async (req, res) => {
       ReferenceId,
     } = updatedConsultation;
 
+    // -----------------------------
     // Generate patient code
+    // -----------------------------
     const lastHnpPatient = await Patient.findOne({
       patientCode: { $regex: /^HNP/ },
     })
@@ -515,9 +598,14 @@ exports.AssignPhysio = async (req, res) => {
 
     const hnpPatientCode = `HNP${String(nextHnpNumber).padStart(6, "0")}`;
 
-    // Generate only activeCycleId
+    // -----------------------------
+    // Create active cycle id
+    // -----------------------------
     const generatedCycleId = new mongoose.Types.ObjectId();
 
+    // -----------------------------
+    // Create patient
+    // -----------------------------
     const newPatient = new Patient({
       patientName,
       patientCode: hnpPatientCode,
@@ -536,7 +624,6 @@ exports.AssignPhysio = async (req, res) => {
       patientAddress,
       patientPinCode,
 
-      // store otherMedCon value into patientCondition
       patientCondition: otherMedCon || patientCondition,
 
       physioId,
@@ -569,7 +656,7 @@ exports.AssignPhysio = async (req, res) => {
       totalSessionDays,
       InitialShorttermGoal,
       goalDuration,
-      visitOrder,
+      visitOrder: numericVisitOrder,
       KmsfromHub,
       KmsfLPatienttoHub,
       Feedback,

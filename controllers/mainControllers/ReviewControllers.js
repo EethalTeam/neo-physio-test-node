@@ -263,7 +263,7 @@ exports.updateReview = async (req, res) => {
       await ReviewStatus.findById(reviewStatusId).select("reviewStatusName");
     const statusName = statusDoc?.reviewStatusName || "";
     if (!review) {
-      return res.status(404).json({ message: "Review not found" });
+      return res.status(200).json({ message: "Review not found" });
     }
 
     // --- START NOTIFICATION LOGIC ---
@@ -362,7 +362,7 @@ exports.deleteReview = async (req, res) => {
     const review = await Review.findByIdAndDelete(_id);
 
     if (!review) {
-      return res.status(404).json({ message: "Review not found" });
+      return res.status(200).json({ message: "Review not found" });
     }
 
     res.status(200).json({ message: "Review deleted successfully" });
@@ -392,7 +392,7 @@ exports.updateReviewDate = async (req, res) => {
       .populate("physioId", "physioName");
 
     if (!review) {
-      return res.status(404).json({ message: "Review not found" });
+      return res.status(200).json({ message: "Review not found" });
     }
 
     // ---------------- NOTIFICATION (Postponed) ----------------
