@@ -539,14 +539,19 @@ exports.getAllPatients = async (req, res) => {
     );
 
     const sessionCountMap = {};
-
+      const totalSessionCountMap = {};
     for (const p of patients) {
       let count = 0;
+      let totalSessionCount = 0;
 
       if (p.activeCycleId) {
         count = await Session.countDocuments({
           patientId: p._id,
-          cycleId: p.activeCycleId,
+          sessionStatusId: COMPLETED_STATUS_ID,
+          isBilled: { $ne: true },
+        });
+        totalSessionCount = await Session.countDocuments({
+          patientId: p._id,
           sessionStatusId: COMPLETED_STATUS_ID,
         });
       } else {
@@ -555,15 +560,20 @@ exports.getAllPatients = async (req, res) => {
           sessionStatusId: COMPLETED_STATUS_ID,
           isBilled: { $ne: true },
         });
+        totalSessionCount = await Session.countDocuments({
+          patientId: p._id,
+          sessionStatusId: COMPLETED_STATUS_ID,
+        });
       }
 
       sessionCountMap[p._id.toString()] = count;
+      totalSessionCountMap[p._id.toString()] = totalSessionCount;
     }
-
     const response = patients.map((p) => ({
       ...p._doc,
       FeesTypeName: p.FeesTypeId?.feesTypeName || "N/A",
       sessionCount: sessionCountMap[p._id.toString()] || 0,
+      totalSessionCount: totalSessionCountMap[p._id.toString()] || 0,
     }));
 
     return res.status(200).json(response);
