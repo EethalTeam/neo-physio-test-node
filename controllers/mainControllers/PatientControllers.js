@@ -553,6 +553,7 @@ exports.getAllPatients = async (req, res) => {
         count = await Session.countDocuments({
           patientId: p._id,
           sessionStatusId: COMPLETED_STATUS_ID,
+          isBilled: { $ne: true },
         });
       }
 
