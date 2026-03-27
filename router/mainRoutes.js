@@ -261,6 +261,14 @@ router.post(
   "/Session/sessionCancelRevert",
   SessionControllers.sessionCancelRevert,
 );
+// router.post(
+//   "/Session/cancelAllSessionsForPhysioLeave",
+//   SessionControllers.cancelAllSessionsForPhysioLeave,
+// );
+router.post(
+  "/Session/reassignTodayCancelledSession",
+  SessionControllers.reassignTodayCancelledSession,
+);
 router.post(
   "/Session/forceBillFirst26Sessions",
   SessionControllers.forceBillFirst26Sessions,

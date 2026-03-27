@@ -534,21 +534,25 @@ exports.getAllPatients = async (req, res) => {
       return res.status(200).json([]);
     }
 
+    const COMPLETED_STATUS_ID = new mongoose.Types.ObjectId(
+      "691ec69eae0e10763c8f21e0",
+    );
+
     const sessionCountMap = {};
 
     for (const p of patients) {
       let count = 0;
 
       if (p.activeCycleId) {
-        // new cycle-based patients
         count = await Session.countDocuments({
           patientId: p._id,
           cycleId: p.activeCycleId,
+          sessionStatusId: COMPLETED_STATUS_ID,
         });
       } else {
-        // old patients without cycle migration
         count = await Session.countDocuments({
           patientId: p._id,
+          sessionStatusId: COMPLETED_STATUS_ID,
         });
       }
 
@@ -1287,11 +1291,18 @@ exports.updatePatientFeedbacks = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 exports.updatePatientGoals = async (req, res) => {
   try {
-    const { patientId, shortTermGoals, goalDuration, feedback, satisfaction } =
-      req.body;
+    const {
+      patientId,
+      shortTermGoals,
+      longTermGoals,
+      physioshortTermGoals,
+      physiolongTermGoals,
+      goalDuration,
+      feedback,
+      satisfaction,
+    } = req.body;
 
     if (!patientId) {
       return res.status(400).json({
@@ -1308,6 +1319,7 @@ exports.updatePatientGoals = async (req, res) => {
       });
     }
 
+    // optional old goal log
     if (patient.shortTermGoals) {
       const prevGoalEntry = {
         goal: patient.shortTermGoals,
@@ -1316,18 +1328,43 @@ exports.updatePatientGoals = async (req, res) => {
         status: "Reviewed & Completed",
         date: new Date().toISOString().split("T")[0],
       };
+
       patient.goalLog = patient.goalLog || [];
       patient.goalLog.push(prevGoalEntry);
     }
 
+    // HOD / admin goals
     if (shortTermGoals !== undefined) {
       patient.shortTermGoals = shortTermGoals;
+    }
+
+    if (longTermGoals !== undefined) {
+      patient.longTermGoals = longTermGoals;
+    }
+
+    // physio goals
+    if (physioshortTermGoals !== undefined) {
+      patient.physioshortTermGoals = physioshortTermGoals;
+    }
+
+    if (physiolongTermGoals !== undefined) {
+      patient.physiolongTermGoals = physiolongTermGoals;
     }
 
     if (goalDuration !== undefined) {
       patient.goalDuration = Number(goalDuration);
     }
+
+    if (feedback !== undefined) {
+      patient.Feedback = feedback;
+    }
+
+    if (satisfaction !== undefined) {
+      patient.Satisfaction = satisfaction;
+    }
+
     patient.updatedAt = new Date();
+
     await patient.save();
 
     return res.status(200).json({
@@ -1340,6 +1377,7 @@ exports.updatePatientGoals = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Internal server error",
+      error: error.message,
     });
   }
 };

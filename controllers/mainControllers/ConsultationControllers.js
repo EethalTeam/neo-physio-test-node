@@ -8,6 +8,8 @@ const Leadstatus = require("../../model/masterModels/Leadstatus");
 const Review = require("../../model/masterModels/Review");
 const ReviewType = require("../../model/masterModels/ReviewType");
 const ReviewStatus = require("../../model/masterModels/ReviewStatus");
+const TreatmentCycle = require("../../model/masterModels/TreatmentCycle");
+
 // Create a new Patient
 exports.createConsultation = async (req, res) => {
   try {
@@ -379,6 +381,9 @@ exports.revertConsultation = async (req, res) => {
 };
 
 exports.AssignPhysio = async (req, res) => {
+  const dbSession = await mongoose.startSession();
+  dbSession.startTransaction();
+
   try {
     const {
       _id,
@@ -399,12 +404,18 @@ exports.AssignPhysio = async (req, res) => {
 
     const existingPatient = await Patient.findOne({
       patientNumber: consultationNumber,
-    });
+    }).session(dbSession);
+
     if (existingPatient) {
-      return res
-        .status(400)
-        .json({ message: "Patient with this mobile number already exists" });
+      await dbSession.abortTransaction();
+      dbSession.endSession();
+
+      return res.status(400).json({
+        success: false,
+        message: "Patient with this mobile number already exists",
+      });
     }
+
     const updatedConsultation = await Consultation.findByIdAndUpdate(
       _id,
       {
@@ -423,18 +434,25 @@ exports.AssignPhysio = async (req, res) => {
           kmsFromPrevious,
         },
       },
-      { new: true, runValidators: true },
+      {
+        new: true,
+        runValidators: true,
+        session: dbSession,
+      },
     );
 
     if (!updatedConsultation) {
-      return res
-        .status(400)
-        .json({ message: "Consultation not found or update failed" });
+      await dbSession.abortTransaction();
+      dbSession.endSession();
+
+      return res.status(400).json({
+        success: false,
+        message: "Consultation not found or update failed",
+      });
     }
 
     const {
       patientName,
-      patientCode,
       isActive,
       consultationDate,
       historyOfFall,
@@ -481,18 +499,12 @@ exports.AssignPhysio = async (req, res) => {
       ReferenceId,
     } = updatedConsultation;
 
-    // const existingPatient = await Patient.findOne({
-    //   patientNumber: patientNumber,
-    // });
-    // if (existingPatient) {
-    //   return res
-    //     .status(400)
-    //     .json({ message: "Patient with this mobile number already exists" });
-    // }
-    // Get last HNP patient
+    // Generate patient code
     const lastHnpPatient = await Patient.findOne({
       patientCode: { $regex: /^HNP/ },
-    }).sort({ createdAt: -1 });
+    })
+      .sort({ createdAt: -1 })
+      .session(dbSession);
 
     let nextHnpNumber = 1;
 
@@ -502,6 +514,10 @@ exports.AssignPhysio = async (req, res) => {
     }
 
     const hnpPatientCode = `HNP${String(nextHnpNumber).padStart(6, "0")}`;
+
+    // Generate only activeCycleId
+    const generatedCycleId = new mongoose.Types.ObjectId();
+
     const newPatient = new Patient({
       patientName,
       patientCode: hnpPatientCode,
@@ -519,7 +535,10 @@ exports.AssignPhysio = async (req, res) => {
       patientAltNum,
       patientAddress,
       patientPinCode,
-      patientCondition,
+
+      // store otherMedCon value into patientCondition
+      patientCondition: otherMedCon || patientCondition,
+
       physioId,
       reviewDate,
       MedicalHistoryAndRiskFactor,
@@ -536,7 +555,6 @@ exports.AssignPhysio = async (req, res) => {
       functionalLimitations,
       ADLAbility,
       shortTermGoals,
-      goalDescription,
       longTermGoals,
       RecomTherapy,
       Frequency,
@@ -558,113 +576,41 @@ exports.AssignPhysio = async (req, res) => {
       Satisfaction,
       kmsFromPrevious,
       reviewFrequency,
+      goalDescription,
       FeesTypeId,
       feeAmount,
       ReferenceId,
+      activeCycleId: generatedCycleId,
+      isRecovered: false,
+      recoveredAt: null,
     });
-    await newPatient.save();
 
-    // const counter = await Counter.findByIdAndUpdate(
-    //   { _id: "sessionCode" },
-    //   { $inc: { seq: totalSessionDays } },
-    //   { new: true, upsert: true },
-    // );
+    await newPatient.save({ session: dbSession });
 
-    // let nextSequenceNumber = counter.seq - totalSessionDays + 1;
-    // let currentDate = new Date(sessionStartDate);
-    // currentDate.setHours(12, 0, 0, 0);
+    await dbSession.commitTransaction();
+    dbSession.endSession();
 
-    // const sessionsToCreate = [];
-    // const reviewsToCreate = [];
-    // const reviewTypeDefault = await ReviewType.findOne({
-    //   reviewTypeName: "General",
-    // });
-    // if (!reviewTypeDefault) {
-    //   return res.status(500).json({
-    //     message:
-    //       'Default ReviewType not found. Please create one named "Standard".',
-    //   });
-    // }
+    const patientWithRefs = await Patient.findById(newPatient._id)
+      .populate("patientGenderId", "genderName")
+      .populate("physioId", "physioName")
+      .populate("ReferenceId", "sourceName");
 
-    // const reviewStatusDefault = await ReviewStatus.findOne({
-    //   reviewStatusName: "Pending",
-    // });
-    // if (!reviewStatusDefault) {
-    //   return res.status(500).json({
-    //     message:
-    //       'Default Reviewstatus not found. Please create one named "Standard".',
-    //   });
-    // }
-    // let sessionsGenerated = 0;
-    // const daysOfWeek = [
-    //   "Sunday",
-    //   "Monday",
-    //   "Tuesday",
-    //   "Wednesday",
-    //   "Thursday",
-    //   "Friday",
-    //   "Saturday",
-    // ];
-
-    // while (sessionsGenerated < totalSessionDays) {
-    //   const currentDayIndex = currentDate.getDay();
-
-    //   if (currentDayIndex === 0) {
-    //     currentDate.setDate(currentDate.getDate() + 1);
-    //     continue;
-    //   }
-
-    //   const formattedCode = `SESS-${String(nextSequenceNumber).padStart(6, "0")}`;
-    //   const currentSessionDate = new Date(currentDate);
-
-    //   sessionsToCreate.push({
-    //     patientId: newPatient._id,
-    //     physioId: physioId,
-    //     sessionDate: currentSessionDate,
-    //     sessionTime: sessionTime,
-    //     sessionStatusId: new mongoose.Types.ObjectId(
-    //       "691ecb36b87c5c57dead47a7",
-    //     ),
-    //     sessionDay: daysOfWeek[currentDayIndex],
-    //     sessionCode: formattedCode,
-    //   });
-
-    //   sessionsGenerated++;
-    //   nextSequenceNumber++;
-
-    //   if (reviewFrequency > 0 && sessionsGenerated % reviewFrequency === 0) {
-    //     reviewsToCreate.push({
-    //       patientId: newPatient._id,
-    //       physioId: physioId,
-    //       reviewStatusId: new mongoose.Types.ObjectId(reviewStatusDefault._id),
-    //       reviewDate: currentSessionDate,
-    //       reviewTypeId: new mongoose.Types.ObjectId(reviewTypeDefault._id),
-    //     });
-    //   }
-
-    //   currentDate.setDate(currentDate.getDate() + 1);
-    // }
-
-    // if (sessionsToCreate.length > 0) {
-    //   await Session.insertMany(sessionsToCreate);
-    // }
-
-    // if (reviewsToCreate.length > 0) {
-    //   await Review.insertMany(reviewsToCreate);
-    // }
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      // message: `Successfully generated ${sessionsToCreate.length} sessions and ${reviewsToCreate.length} reviews.`,
-      message: "Physio Assigned successfully",
+      message: "Physio assigned successfully",
       data: {
-        patient: newPatient,
-        // sessionsCount: sessionsToCreate.length,
-        // reviewsCount: reviewsToCreate.length,
+        patient: patientWithRefs,
       },
     });
   } catch (error) {
+    await dbSession.abortTransaction();
+    dbSession.endSession();
+
     console.error("Error in AssignPhysio:", error);
-    res.status(500).json({ message: error.message });
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Something went wrong",
+    });
   }
 };

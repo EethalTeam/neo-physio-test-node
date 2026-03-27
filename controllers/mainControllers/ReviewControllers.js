@@ -131,27 +131,31 @@ exports.createRedflag = async (req, res) => {
 //     res.status(500).json({ message: error.message });
 //   }
 // };
-
 exports.getAllReview = async (req, res) => {
   try {
     const now = new Date();
 
-    // 1. Calculate the current day in India (IST)
-    // IST is UTC + 5.5 hours
+    // IST offset = UTC + 5:30
     const istOffset = 5.5 * 60 * 60 * 1000;
+
+    // Current IST date/time
     const todayIST = new Date(now.getTime() + istOffset);
 
-    // 2. Set Start of Today (IST)
-    const startIST = new Date(todayIST);
+    // Start of today in IST
+    const todayStartIST = new Date(todayIST);
+    todayStartIST.setUTCHours(0, 0, 0, 0);
+
+    // Start of 4 days before today in IST
+    const startIST = new Date(todayStartIST);
+    startIST.setUTCDate(startIST.getUTCDate() - 4);
     startIST.setUTCHours(0, 0, 0, 0);
 
-    // 3. Set End of Tomorrow (IST)
-    const endIST = new Date(todayIST);
-    endIST.setUTCDate(endIST.getUTCDate() + 1);
+    // End of yesterday in IST
+    const endIST = new Date(todayStartIST);
+    endIST.setUTCDate(endIST.getUTCDate() - 1);
     endIST.setUTCHours(23, 59, 59, 999);
 
-    // 4. Convert IST boundaries back to UTC for MongoDB query
-    // This shifts our search back by 5.5 hours to catch those 18:30:00.000Z records
+    // Convert IST range back to UTC for Mongo query
     const finalStart = new Date(startIST.getTime() - istOffset);
     const finalEnd = new Date(endIST.getTime() - istOffset);
 
@@ -168,9 +172,24 @@ exports.getAllReview = async (req, res) => {
       .populate("physioId", "physioName")
       .populate("reviewTypeId", "reviewTypeName")
       .populate("reviewStatusId", "reviewStatusName")
-      .sort({ reviewDate: 1 });
+      .populate("redFlags.redFlagId", "redflagName")
+      .sort({ reviewDate: -1 });
 
-    res.status(200).json(reviews);
+    const filteredReviews = reviews.filter((review) => {
+      const statusName =
+        review.reviewStatusId?.reviewStatusName?.toLowerCase()?.trim() || "";
+
+      const reviewTypeName =
+        review.reviewTypeId?.reviewTypeName?.toLowerCase()?.trim() || "";
+
+      const isPending = statusName === "pending";
+      const isRedFlag =
+        reviewTypeName === "redflag" || reviewTypeName === "redflags";
+
+      return isPending && isRedFlag;
+    });
+
+    res.status(200).json(filteredReviews);
   } catch (error) {
     console.error("Error fetching reviews:", error);
     res.status(500).json({ message: error.message });

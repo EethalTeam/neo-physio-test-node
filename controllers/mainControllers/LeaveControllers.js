@@ -1,28 +1,38 @@
 const mongoose = require("mongoose");
 const LeaveModel = require("../../model/masterModels/Leave");
 
+const Session = require("../../model/masterModels/Session");
+const SessionStatus = require("../../model/masterModels/SessionStatus");
+
 exports.markLeave = async (req, res) => {
   try {
     const { physioId, LeaveDate, LeaveMode } = req.body;
 
     if (!physioId || !LeaveDate || !LeaveMode) {
       return res.status(400).json({
-        message: "physioId, date, and leaveMode are required",
+        success: false,
+        message: "physioId, LeaveDate and LeaveMode are required",
       });
     }
 
     const date = new Date(LeaveDate);
     date.setHours(0, 0, 0, 0);
+
+    const end = new Date(LeaveDate);
+    end.setHours(23, 59, 59, 999);
+
     const existingLeave = await LeaveModel.findOne({
       physioId,
       LeaveDate: date,
     });
+
     if (existingLeave) {
       return res.status(400).json({
         success: false,
         message: "Already leave exists for this physio with this date",
       });
     }
+
     const savedLeave = await LeaveModel.create({
       physioId,
       LeaveDate: date,
@@ -35,13 +45,58 @@ exports.markLeave = async (req, res) => {
       "physioName",
     );
 
+    const selectedDateStr = new Date(LeaveDate).toISOString().split("T")[0];
+    const todayStr = new Date().toISOString().split("T")[0];
+
+    let autoCancelledCount = 0;
+
+    if (selectedDateStr === todayStr) {
+      const canceledStatus = await SessionStatus.findOne({
+        sessionStatusName: "Canceled",
+      });
+
+      if (canceledStatus) {
+        const sessions = await Session.find({
+          physioId: new mongoose.Types.ObjectId(physioId),
+          sessionDate: { $gte: date, $lte: end },
+          sessionStatusId: { $ne: canceledStatus._id },
+        });
+
+        if (sessions.length > 0) {
+          const sessionIds = sessions.map((s) => s._id);
+
+          await Session.updateMany(
+            { _id: { $in: sessionIds } },
+            {
+              $set: {
+                sessionStatusId: canceledStatus._id,
+                sessionCancelReason: "Physio Leave",
+                sessionFeedbackCons: "Physio Leave",
+                cancelledKms: 0,
+                action: "Canceled",
+              },
+            },
+          );
+
+          autoCancelledCount = sessionIds.length;
+        }
+      }
+    }
+
     return res.status(201).json({
       success: true,
-      message: "Leave marked successfully",
+      message:
+        selectedDateStr === todayStr
+          ? `Leave marked successfully and ${autoCancelledCount} session(s) auto-cancelled.`
+          : "Leave marked successfully",
       data: populated,
+      autoCancelledCount,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 

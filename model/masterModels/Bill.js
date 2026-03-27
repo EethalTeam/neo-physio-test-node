@@ -7,6 +7,10 @@ const billSchema = new mongoose.Schema(
       ref: "Patient",
       required: true,
     },
+    invoiceNo: {
+      type: Number,
+      required: true,
+    },
     physioId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Physio",
@@ -14,28 +18,43 @@ const billSchema = new mongoose.Schema(
     },
     paymentType: {
       type: String,
-      enum: ["Full Payment", "Partial Payment"],
+      enum: [
+        "Full Payment",
+        "Partial Payment",
+        "Discount",
+        "Bad Debt",
+        "Pending",
+      ],
+      default: "Pending",
     },
     paymentStatus: {
       type: String,
-      enum: ["Paid", "Pending", "Partially Paid"],
+      enum: ["Pending", "Partially Paid", "Paid", "Bad Debt"],
       default: "Pending",
     },
     isBadDebt: {
       type: Boolean,
       default: false,
     },
+    DiscountAmount: {
+      type: Number,
+      default: 0,
+    },
     ReceivedAmount: {
       type: Number,
+      default: 0,
     },
     TotalBilledAmount: {
       type: Number,
+      default: 0,
     },
     DeductedFromAdvance: {
       type: Number,
+      default: 0,
     },
     NetBilledAmount: {
       type: Number,
+      default: 0,
     },
     isComplete: {
       type: Boolean,
@@ -55,9 +74,11 @@ const billSchema = new mongoose.Schema(
     },
     ratePerSession: {
       type: Number,
+      default: 0,
     },
     totalAmount: {
       type: Number,
+      default: 0,
     },
     month: {
       type: String,
@@ -65,7 +86,15 @@ const billSchema = new mongoose.Schema(
     year: {
       type: Number,
     },
-    TotalSessionCount: { type: Number },
+    TotalSessionCount: {
+      type: Number,
+      default: 0,
+    },
+    feeType: {
+      type: String,
+      enum: ["permonth", "persession"],
+      default: "persession",
+    },
   },
   {
     timestamps: true,
