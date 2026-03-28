@@ -134,65 +134,118 @@ exports.createRedflag = async (req, res) => {
 exports.getAllReview = async (req, res) => {
   try {
     const now = new Date();
-
-    // IST offset = UTC + 5:30
     const istOffset = 5.5 * 60 * 60 * 1000;
 
-    // Current IST date/time
-    const todayIST = new Date(now.getTime() + istOffset);
+    const nowIST = new Date(now.getTime() + istOffset);
 
-    // Start of today in IST
-    const todayStartIST = new Date(todayIST);
+    // TODAY
+    const todayStartIST = new Date(nowIST);
     todayStartIST.setUTCHours(0, 0, 0, 0);
 
-    // Start of 4 days before today in IST
-    const startIST = new Date(todayStartIST);
-    startIST.setUTCDate(startIST.getUTCDate() - 4);
-    startIST.setUTCHours(0, 0, 0, 0);
+    const todayEndIST = new Date(nowIST);
+    todayEndIST.setUTCHours(23, 59, 59, 999);
 
-    // End of yesterday in IST
-    const endIST = new Date(todayStartIST);
-    endIST.setUTCDate(endIST.getUTCDate() - 1);
-    endIST.setUTCHours(23, 59, 59, 999);
+    // YESTERDAY
+    const yesterdayStartIST = new Date(todayStartIST);
+    yesterdayStartIST.setUTCDate(yesterdayStartIST.getUTCDate() - 1);
+    yesterdayStartIST.setUTCHours(0, 0, 0, 0);
 
-    // Convert IST range back to UTC for Mongo query
-    const finalStart = new Date(startIST.getTime() - istOffset);
-    const finalEnd = new Date(endIST.getTime() - istOffset);
+    const yesterdayEndIST = new Date(todayStartIST);
+    yesterdayEndIST.setUTCDate(yesterdayEndIST.getUTCDate() - 1);
+    yesterdayEndIST.setUTCHours(23, 59, 59, 999);
 
-    const reviews = await Review.find({
-      reviewDate: {
-        $gte: finalStart,
-        $lte: finalEnd,
+    // LAST 3 DAYS (excluding today)
+    const last3DaysStartIST = new Date(todayStartIST);
+    last3DaysStartIST.setUTCDate(last3DaysStartIST.getUTCDate() - 3);
+    last3DaysStartIST.setUTCHours(0, 0, 0, 0);
+
+    const yesterdayEndFor3Days = yesterdayEndIST;
+
+    // Convert IST → UTC
+    const todayStartUTC = new Date(todayStartIST.getTime() - istOffset);
+    const todayEndUTC = new Date(todayEndIST.getTime() - istOffset);
+
+    const yesterdayStartUTC = new Date(yesterdayStartIST.getTime() - istOffset);
+    const yesterdayEndUTC = new Date(yesterdayEndIST.getTime() - istOffset);
+
+    const last3DaysStartUTC = new Date(last3DaysStartIST.getTime() - istOffset);
+    const last3DaysEndUTC = new Date(
+      yesterdayEndFor3Days.getTime() - istOffset,
+    );
+
+    const populateFields = [
+      {
+        path: "patientId",
+        select: "patientName shortTermGoals longTermGoals isRecovered",
       },
+      {
+        path: "physioId",
+        select: "physioName",
+      },
+      {
+        path: "reviewTypeId",
+        select: "reviewTypeName",
+      },
+      {
+        path: "reviewStatusId",
+        select: "reviewStatusName",
+      },
+      {
+        path: "redFlags.redFlagId",
+        select: "redflagName",
+      },
+    ];
+
+    // ✅ 1. TODAY (General + RedFlag)
+    const todayReviews = await Review.find({
+      reviewDate: { $gte: todayStartUTC, $lte: todayEndUTC },
     })
-      .populate(
-        "patientId",
-        "patientName shortTermGoals longTermGoals isRecovered",
-      )
-      .populate("physioId", "physioName")
-      .populate("reviewTypeId", "reviewTypeName")
-      .populate("reviewStatusId", "reviewStatusName")
-      .populate("redFlags.redFlagId", "redflagName")
+      .populate(populateFields)
       .sort({ reviewDate: -1 });
 
-    const filteredReviews = reviews.filter((review) => {
-      const statusName =
-        review.reviewStatusId?.reviewStatusName?.toLowerCase()?.trim() || "";
+    // ✅ 2. YESTERDAY GENERAL
+    const yesterdayReviews = await Review.find({
+      reviewDate: { $gte: yesterdayStartUTC, $lte: yesterdayEndUTC },
+    })
+      .populate(populateFields)
+      .sort({ reviewDate: -1 });
 
-      const reviewTypeName =
+    const yesterdayGeneralReviews = yesterdayReviews.filter((review) => {
+      const type =
         review.reviewTypeId?.reviewTypeName?.toLowerCase()?.trim() || "";
-
-      const isPending = statusName === "pending";
-      const isRedFlag =
-        reviewTypeName === "redflag" || reviewTypeName === "redflags";
-
-      return isPending && isRedFlag;
+      return type === "general";
     });
 
-    res.status(200).json(filteredReviews);
+    // ✅ 3. LAST 3 DAYS PENDING REDFLAG
+    const last3DaysReviews = await Review.find({
+      reviewDate: { $gte: last3DaysStartUTC, $lte: last3DaysEndUTC },
+    })
+      .populate(populateFields)
+      .sort({ reviewDate: -1 });
+
+    const pendingRedFlagReviews = last3DaysReviews.filter((review) => {
+      const status =
+        review.reviewStatusId?.reviewStatusName?.toLowerCase()?.trim() || "";
+      const type =
+        review.reviewTypeId?.reviewTypeName?.toLowerCase()?.trim() || "";
+
+      return (
+        status === "pending" && (type === "redflag" || type === "redflags")
+      );
+    });
+
+    return res.status(200).json({
+      success: true,
+      todayReviews,
+      yesterdayGeneralReviews,
+      pendingRedFlagReviews,
+    });
   } catch (error) {
     console.error("Error fetching reviews:", error);
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
