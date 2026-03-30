@@ -5,10 +5,23 @@ const Session = require("../../model/masterModels/Session");
 const Debit = require("../../model/masterModels/DebitPayment");
 const Patient = require("../../model/masterModels/Patient");
 const Counter = require("../../model/masterModels/Counter");
+
 const COMPLETED_STATUS_ID = "691ec69eae0e10763c8f21e0";
 
-// helper: normalize fee type from patient
-const getNormalizedFeeType = (patient) => {
+// ✅ your master fee type ids
+const PER_MONTH_ID = "691af5c343be7d5e2861981f";
+const PER_SESSION_ID = "691af5dc43be7d5e28619825";
+
+// helper
+const round2 = (value) => Number((Number(value) || 0).toFixed(2));
+
+// ✅ per month rate calculation
+const getPerMonthRatePerSession = (feeAmount) => {
+  return round2(Number(feeAmount || 0) / 26);
+};
+
+// helper: fallback name check only if id is missing
+const getNormalizedFeeTypeName = (patient) => {
   return String(
     patient?.FeesTypeId?.FeesTypeName ||
       patient?.FeesTypeId?.feesTypeName ||
@@ -21,19 +34,46 @@ const getNormalizedFeeType = (patient) => {
     .replace(/\s+/g, "");
 };
 
+// helper: single source of truth
+const getBillingTypeDetails = (patient) => {
+  const feeTypeId = String(
+    patient?.FeesTypeId?._id || patient?.FeesTypeId || "",
+  );
+  const normalizedName = getNormalizedFeeTypeName(patient);
+
+  const isPerMonth =
+    feeTypeId === PER_MONTH_ID ||
+    normalizedName === "permonth" ||
+    normalizedName === "monthly" ||
+    normalizedName === "month";
+
+  const isPerSession =
+    feeTypeId === PER_SESSION_ID ||
+    normalizedName === "persession" ||
+    normalizedName === "session";
+
+  if (isPerMonth) {
+    return { feeType: "permonth", isPerMonth: true, isPerSession: false };
+  }
+
+  return { feeType: "persession", isPerMonth: false, isPerSession: true };
+};
+
 exports.createBill = async (req, res) => {
   try {
     const { patientId, month, year } = req.body;
-    const counter = await Counter.findOneAndUpdate(
-      { _id: "invoiceNo" },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true },
-    );
+
     if (!patientId || !month || !year) {
       return res.status(400).json({
         message: "patientId, month and year required",
       });
     }
+
+    const counter = await Counter.findOneAndUpdate(
+      { _id: "invoiceNo" },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true },
+    );
 
     // const existingBill = await Bill.findOne({
     //   patientId,
@@ -94,20 +134,17 @@ exports.createBill = async (req, res) => {
     }
 
     const feeAmount = Number(patient?.feeAmount || 0);
-    const feeTypeName = getNormalizedFeeType(patient);
-
-    const isPerMonth = feeTypeName === "permonth";
-    const isPerSession = feeTypeName === "persession";
+    const { feeType, isPerMonth } = getBillingTypeDetails(patient);
 
     let totalBill = 0;
     let ratePerSession = 0;
 
     if (isPerMonth) {
       totalBill = feeAmount;
-      ratePerSession = 0;
+      ratePerSession = getPerMonthRatePerSession(feeAmount);
     } else {
-      ratePerSession = feeAmount;
-      totalBill = feeAmount * item.count;
+      ratePerSession = round2(feeAmount);
+      totalBill = round2(feeAmount * Number(item.count || 0));
     }
 
     const advPaid =
@@ -129,9 +166,9 @@ exports.createBill = async (req, res) => {
     const deduct = Math.min(Math.max(advPaid - usedAdv, 0), totalBill);
     const net = totalBill - deduct;
 
-    const safeTotalBill = Number((totalBill || 0).toFixed(2));
-    const safeDeduct = Number((deduct || 0).toFixed(2));
-    const safeNet = Number((net || 0).toFixed(2));
+    const safeTotalBill = round2(totalBill);
+    const safeDeduct = round2(deduct);
+    const safeNet = round2(net);
     const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
 
     const newBill = await Bill.create({
@@ -144,20 +181,21 @@ exports.createBill = async (req, res) => {
           ? "Full Payment"
           : safeDeduct > 0
             ? "Partial Payment"
-            : "Full Payment",
+            : "Pending",
       ReceivedAmount: safeDeduct,
       TotalBilledAmount: safeTotalBill,
       DeductedFromAdvance: safeDeduct,
       NetBilledAmount: safeNet,
       startDate: item.firstDate,
       ToDate: item.lastDate,
-      ratePerSession: Number(ratePerSession.toFixed(2)),
+      ratePerSession: round2(ratePerSession),
       totalAmount: safeTotalBill,
-      TotalSessionCount: item.count,
+      TotalSessionCount: Number(item.count || 0),
       month: String(month).trim(),
       year: Number(year),
       isComplete: safeNet <= 0,
-      feeType: isPerMonth ? "permonth" : "persession",
+      feeType,
+      isBadDebt: false,
     });
 
     await Session.updateMany(
@@ -209,14 +247,14 @@ exports.markBadDebt = async (req, res) => {
 
     bill.isBadDebt = true;
 
-    if (bill.ReceivedAmount > 0) {
+    if (Number(bill.ReceivedAmount || 0) > 0) {
       bill.paymentStatus = "Paid";
     } else {
       bill.paymentStatus = "Bad Debt";
     }
 
     bill.paymentType = "Bad Debt";
-    bill.isComplete = bill.ReceivedAmount > 0;
+    bill.isComplete = Number(bill.ReceivedAmount || 0) > 0;
 
     await bill.save();
 
@@ -237,14 +275,16 @@ exports.markBadDebt = async (req, res) => {
 exports.generateBillForRecoveredPatient = async (patientId) => {
   try {
     const patient = await Patient.findById(patientId).populate("FeesTypeId");
+
+    if (!patient) {
+      throw new Error("Patient not found");
+    }
+
     const counter = await Counter.findOneAndUpdate(
       { _id: "invoiceNo" },
       { $inc: { seq: 1 } },
       { new: true, upsert: true },
     );
-    if (!patient) {
-      throw new Error("Patient not found");
-    }
 
     const unbilledCompletedSessions = await Session.find({
       patientId: patient._id,
@@ -273,19 +313,17 @@ exports.generateBillForRecoveredPatient = async (patientId) => {
         .sessionDate;
 
     const feeAmount = Number(patient?.feeAmount || 0);
-    const feeTypeName = getNormalizedFeeType(patient);
-
-    const isPerMonth = feeTypeName === "permonth";
+    const { feeType, isPerMonth } = getBillingTypeDetails(patient);
 
     let ratePerSession = 0;
     let totalBill = 0;
 
     if (isPerMonth) {
       totalBill = feeAmount;
-      ratePerSession = 0;
+      ratePerSession = getPerMonthRatePerSession(feeAmount);
     } else {
-      ratePerSession = feeAmount;
-      totalBill = feeAmount * totalSessionCount;
+      ratePerSession = round2(feeAmount);
+      totalBill = round2(feeAmount * totalSessionCount);
     }
 
     const advPaid =
@@ -320,20 +358,21 @@ exports.generateBillForRecoveredPatient = async (patientId) => {
           ? "Full Payment"
           : deduct > 0
             ? "Partial Payment"
-            : "Full Payment",
-      ReceivedAmount: Number(deduct.toFixed(2)),
-      TotalBilledAmount: Number(totalBill.toFixed(2)),
-      DeductedFromAdvance: Number(deduct.toFixed(2)),
-      NetBilledAmount: Number(netBilledAmount.toFixed(2)),
+            : "Pending",
+      ReceivedAmount: round2(deduct),
+      TotalBilledAmount: round2(totalBill),
+      DeductedFromAdvance: round2(deduct),
+      NetBilledAmount: round2(netBilledAmount),
       startDate: firstDate,
       ToDate: lastDate,
-      ratePerSession: Number(ratePerSession.toFixed(2)),
-      totalAmount: Number(totalBill.toFixed(2)),
+      ratePerSession: round2(ratePerSession),
+      totalAmount: round2(totalBill),
       TotalSessionCount: totalSessionCount,
       month: billDate.toLocaleString("default", { month: "long" }),
       year: billDate.getFullYear(),
       isComplete: netBilledAmount <= 0,
-      feeType: isPerMonth ? "permonth" : "persession",
+      feeType,
+      isBadDebt: false,
     });
 
     await Session.updateMany(
@@ -406,11 +445,11 @@ exports.receivePayment = async (req, res) => {
       });
     }
 
-    const updatedDiscount = Number((oldDiscount + discountNow).toFixed(2));
-    const updatedReceived = Number((oldReceived + receivedNow).toFixed(2));
+    const updatedDiscount = round2(oldDiscount + discountNow);
+    const updatedReceived = round2(oldReceived + receivedNow);
 
     const finalPayable = Math.max(net - updatedDiscount, 0);
-    let outstanding = Number((finalPayable - updatedReceived).toFixed(2));
+    let outstanding = round2(finalPayable - updatedReceived);
 
     if (Math.abs(outstanding) < 0.01) {
       outstanding = 0;
@@ -454,7 +493,6 @@ exports.receivePayment = async (req, res) => {
         existingCredit.Creditfeedback =
           feedback || existingCredit.Creditfeedback || "";
         existingCredit.Creditnotes = notes || existingCredit.Creditnotes || "";
-
         await existingCredit.save();
       } else {
         await Credit.create({
@@ -468,7 +506,7 @@ exports.receivePayment = async (req, res) => {
           Creditfeedback: feedback || "",
           Creditnotes:
             notes ||
-            (discountNow > 0
+            (discountAmount > 0
               ? "System generated after discount"
               : "System generated from partial payment"),
         });
@@ -497,7 +535,6 @@ exports.receivePayment = async (req, res) => {
 exports.getAllBill = async (req, res) => {
   try {
     const { month, year, patientId } = req.body;
-
     const query = {};
 
     if (month && month !== "ALL") {
@@ -514,7 +551,12 @@ exports.getAllBill = async (req, res) => {
 
     const bills = await Bill.find(query)
       .populate("physioId", "physioName")
-      .populate("patientId")
+      .populate({
+        path: "patientId",
+        populate: {
+          path: "FeesTypeId",
+        },
+      })
       .sort({ createdAt: -1 });
 
     return res.status(200).json(bills);
@@ -537,9 +579,21 @@ exports.deleteBill = async (req, res) => {
       return res.status(400).json({ message: "Bill not found" });
     }
 
-    res.status(200).json({ message: "Bill deleted successfully" });
+    await Session.updateMany(
+      { billId: bill._id },
+      {
+        $set: {
+          isBilled: false,
+          billId: null,
+        },
+      },
+    );
+
+    await Credit.deleteMany({ BillId: bill._id });
+
+    return res.status(200).json({ message: "Bill deleted successfully" });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 
@@ -553,17 +607,20 @@ exports.updateSendStatus = async (req, res) => {
       { new: true },
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Bill marked as sent",
       data: bill,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 
 exports.deleteAllBillsAndResetSessions = async (req, res) => {
   try {
+    const allBills = await Bill.find({}, { _id: 1 });
+    const allBillIds = allBills.map((b) => b._id);
+
     const billResult = await Bill.deleteMany({});
 
     const completedStatusId = new mongoose.Types.ObjectId(COMPLETED_STATUS_ID);
@@ -578,6 +635,10 @@ exports.deleteAllBillsAndResetSessions = async (req, res) => {
       },
     );
 
+    if (allBillIds.length > 0) {
+      await Credit.deleteMany({ BillId: { $in: allBillIds } });
+    }
+
     return res.status(200).json({
       message: "All bills deleted and sessions reset",
       billsDeleted: billResult.deletedCount,
@@ -587,3 +648,146 @@ exports.deleteAllBillsAndResetSessions = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
+// exports.fixPerMonthBills = async (req, res) => {
+//   try {
+//     const { billId, patientId } = req.body;
+
+//     const query = {};
+
+//     if (billId) {
+//       if (!mongoose.Types.ObjectId.isValid(billId)) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Invalid billId",
+//         });
+//       }
+//       query._id = billId;
+//     }
+
+//     if (patientId) {
+//       if (!mongoose.Types.ObjectId.isValid(patientId)) {
+//         return res.status(400).json({
+//           success: false,
+//           message: "Invalid patientId",
+//         });
+//       }
+//       query.patientId = patientId;
+//     }
+
+//     const bills = await Bill.find(query).populate({
+//       path: "patientId",
+//       populate: {
+//         path: "FeesTypeId",
+//       },
+//     });
+
+//     if (!bills.length) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "No bills found",
+//       });
+//     }
+
+//     const updatedBills = [];
+//     const skippedBills = [];
+
+//     for (const bill of bills) {
+//       const patient = bill.patientId;
+
+//       if (!patient) {
+//         skippedBills.push({
+//           billId: bill._id,
+//           reason: "Patient not found",
+//         });
+//         continue;
+//       }
+
+//       const feeTypeId = String(
+//         patient?.FeesTypeId?._id || patient?.FeesTypeId || "",
+//       );
+
+//       // only monthly patients
+//       if (feeTypeId !== PER_MONTH_ID) {
+//         skippedBills.push({
+//           billId: bill._id,
+//           patientName: patient?.patientName || "",
+//           reason: "Patient is not permonth",
+//         });
+//         continue;
+//       }
+
+//       const feeAmount = round2(patient?.feeAmount || 0);
+//       const deductedFromAdvance = round2(bill?.DeductedFromAdvance || 0);
+//       const receivedAmount = round2(bill?.ReceivedAmount || 0);
+//       const discountAmount = round2(bill?.DiscountAmount || 0);
+
+//       const totalBilledAmount = feeAmount;
+//       const ratePerSession = getPerMonthRatePerSession(feeAmount);
+//       const netBilledAmount = Math.max(
+//         totalBilledAmount - deductedFromAdvance,
+//         0,
+//       );
+//       const finalPayable = Math.max(netBilledAmount - discountAmount, 0);
+//       const pendingAmount = Math.max(finalPayable - receivedAmount, 0);
+
+//       let paymentStatus = "Pending";
+//       let paymentType = "Pending";
+//       let isComplete = false;
+
+//       if (pendingAmount === 0) {
+//         paymentStatus = "Paid";
+//         paymentType = "Full Payment";
+//         isComplete = true;
+//       } else if (receivedAmount > 0) {
+//         paymentStatus = "Partially Paid";
+//         paymentType = "Partial Payment";
+//         isComplete = false;
+//       } else if (discountAmount > 0) {
+//         paymentStatus = "Pending";
+//         paymentType = "Discount";
+//         isComplete = false;
+//       }
+
+//       await Bill.updateOne(
+//         { _id: bill._id },
+//         {
+//           $set: {
+//             feeType: "permonth",
+//             ratePerSession: round2(ratePerSession),
+//             TotalBilledAmount: round2(totalBilledAmount),
+//             totalAmount: round2(totalBilledAmount),
+//             NetBilledAmount: round2(netBilledAmount),
+//             paymentStatus,
+//             paymentType,
+//             isComplete,
+//           },
+//         },
+//       );
+
+//       updatedBills.push({
+//         billId: bill._id,
+//         patientName: patient?.patientName || "",
+//         feeType: "permonth",
+//         ratePerSession: round2(ratePerSession),
+//         TotalBilledAmount: round2(totalBilledAmount),
+//         NetBilledAmount: round2(netBilledAmount),
+//       });
+//     }
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "PerMonth bills fixed successfully",
+//       updatedCount: updatedBills.length,
+//       skippedCount: skippedBills.length,
+//       updatedBills,
+//       skippedBills,
+//     });
+//   } catch (error) {
+//     console.error("fixPerMonthBills error:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: error.message,
+//     });
+//   }
+// };
