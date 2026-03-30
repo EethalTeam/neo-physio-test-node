@@ -151,6 +151,10 @@ router.post(
   "/Bill/resetIsBilled",
   BillCountrollers.deleteAllBillsAndResetSessions,
 );
+router.post("/revertBillingStatusGlobal", BillCountrollers.revertBillingStatusGlobal);
+router.post("/syncCorrectMarchBillsFixed", BillCountrollers.syncCorrectMarchBillsFixed);
+router.post("/getSessionBillingAudit", BillCountrollers.getSessionBillingAudit);
+
 router.post("/Leave/resetLeaveModule", LeaveControllers.resetLeaveModule);
 //Physio
 router.post(
