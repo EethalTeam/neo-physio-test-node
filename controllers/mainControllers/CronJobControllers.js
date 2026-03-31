@@ -862,17 +862,254 @@ exports.processSessionPendingCheck = async (io) => {
 //   }
 // };
 
+// exports.processMonthlyBilling = async () => {
+//   try {
+//     const today = new Date();
+    
+//     // 1. CALCULATE LAST DAY OF CURRENT MONTH
+//     // Setting day to '0' of the next month gives us the last day of the current month
+//     const lastDayDateObject = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+//     const lastDayOfMonth = lastDayDateObject.getDate();
+
+//     // 2. THE SAFETY GATE
+//     // If today is NOT the last day, stop execution immediately.
+//     if (today.getDate() !== lastDayOfMonth) {
+//       console.log(`[Billing] Skipping: Today is ${today.getDate()}. Billing will run on the ${lastDayOfMonth}th.`);
+//       return;
+//     }
+
+//     console.log(`[Billing] Starting month-end processing for ${today.toDateString()}...`);
+
+//     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
+//     const endOfMonth = new Date(today.getFullYear(), today.getMonth(), lastDayOfMonth, 23, 59, 59, 999);
+
+//     const monthName = today.toLocaleString("default", { month: "long" });
+//     const currentYear = today.getFullYear();
+
+//     // Helper: Normalize Fee Type
+//     const getNormalizedFeeType = (patient) => {
+//       const type = patient?.FeesTypeId?.FeesTypeName ||
+//                    patient?.FeesTypeId?.feesTypeName ||
+//                    patient?.FeesTypeId?.name ||
+//                    patient?.FeesTypeId?.feeTypeName || "";
+//       return String(type).trim().toLowerCase().replace(/\s+/g, "");
+//     };
+
+//     // Helper: Apply Advance Logic
+//     const applyAdvanceAndResetDebit = async (patientId, deductAmount) => {
+//       if (!deductAmount || deductAmount <= 0) return;
+//       let remainingDeduct = Number(deductAmount);
+
+//       const debitEntries = await Debit.find({
+//         patientId,
+//         DebitAmount: { $gt: 0 },
+//       }).sort({ createdAt: 1 });
+
+//       for (const debit of debitEntries) {
+//         if (remainingDeduct <= 0) break;
+//         const currentDebitAmount = Number(debit.DebitAmount || 0);
+
+//         if (currentDebitAmount <= remainingDeduct) {
+//           remainingDeduct -= currentDebitAmount;
+//           debit.DebitAmount = 0;
+//         } else {
+//           debit.DebitAmount = Number((currentDebitAmount - remainingDeduct).toFixed(2));
+//           remainingDeduct = 0;
+//         }
+//         await debit.save();
+//       }
+//     };
+
+//     // 3. GET PATIENTS WITH UNBILLED SESSIONS
+//     const patientsWithUnbilledSessions = await Session.aggregate([
+//       {
+//         $match: {
+//           sessionStatusId: new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0"),
+//           isBilled: false,
+//         },
+//       },
+//       { $group: { _id: "$patientId" } },
+//     ]);
+
+//     for (const row of patientsWithUnbilledSessions) {
+//       const patientId = row._id;
+//       const patient = await Patient.findById(patientId).populate("FeesTypeId");
+//       if (!patient) continue;
+
+//       const feeTypeName = getNormalizedFeeType(patient);
+//       const isPerMonth = feeTypeName === "permonth";
+//       const isPerSession = feeTypeName === "persession";
+
+//       // ---------------------------------------------------------
+//       // CASE 1: PER MONTH BILLING
+//       // ---------------------------------------------------------
+//       if (isPerMonth) {
+//         const monthlySessions = await Session.find({
+//           patientId,
+//           sessionStatusId: new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0"),
+//           sessionDate: { $gte: startOfMonth, $lte: endOfMonth },
+//           isBilled: false,
+//         }).sort({ sessionDate: 1 });
+
+//         if (!monthlySessions.length) continue;
+
+//         const existingBill = await Bill.findOne({
+//           patientId,
+//           month: monthName,
+//           year: currentYear,
+//           feeType: "permonth",
+//         });
+
+//         if (existingBill) {
+//           console.log(`[Billing] Bill already exists for ${patient.patientName} (PerMonth)`);
+//           continue;
+//         }
+
+//         const physioId = monthlySessions[0]?.physioId || patient?.physioId;
+//         if (!physioId) continue;
+
+//         const totalBill = Number(patient?.feeAmount || 0);
+        
+//         // Calculate Advance Balance
+//         const advPaidAgg = await Debit.aggregate([
+//           { $match: { patientId } },
+//           { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
+//         ]);
+//         const usedAdvAgg = await Bill.aggregate([
+//           { $match: { patientId } },
+//           { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
+//         ]);
+        
+//         const availableAdvance = Math.max((advPaidAgg[0]?.total || 0) - (usedAdvAgg[0]?.total || 0), 0);
+//         const deduct = Math.min(availableAdvance, totalBill);
+//         const netBilledAmount = totalBill - deduct;
+
+//         // GENERATE UNIQUE INVOICE NO
+//         const counter = await Counter.findOneAndUpdate(
+//           { _id: "invoiceNo" },
+//           { $inc: { seq: 1 } },
+//           { new: true, upsert: true }
+//         );
+//         const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
+
+//         const newBill = await Bill.create({
+//           patientId,
+//           invoiceNo,
+//           physioId,
+//           paymentStatus: netBilledAmount <= 0 ? "Paid" : "Pending",
+//           paymentType: netBilledAmount <= 0 ? "Full Payment" : (deduct > 0 ? "Partial Payment" : "Full Payment"),
+//           ReceivedAmount: Number(deduct.toFixed(2)),
+//           TotalBilledAmount: Number(totalBill.toFixed(2)),
+//           DeductedFromAdvance: Number(deduct.toFixed(2)),
+//           NetBilledAmount: Number(netBilledAmount.toFixed(2)),
+//           startDate: monthlySessions[0].sessionDate,
+//           ToDate: monthlySessions[monthlySessions.length - 1].sessionDate,
+//           ratePerSession: 0,
+//           totalAmount: Number(totalBill.toFixed(2)),
+//           TotalSessionCount: monthlySessions.length,
+//           month: monthName,
+//           year: currentYear,
+//           isComplete: netBilledAmount <= 0,
+//           feeType: "permonth",
+//         });
+
+//         await Session.updateMany(
+//           { _id: { $in: monthlySessions.map((s) => s._id) } },
+//           { $set: { isBilled: true, billId: newBill._id } }
+//         );
+
+//         await applyAdvanceAndResetDebit(patientId, deduct);
+//         console.log(`[Billing] Created ${invoiceNo} for ${patient.patientName}`);
+//       }
+
+//       // ---------------------------------------------------------
+//       // CASE 2: PER SESSION BILLING
+//       // ---------------------------------------------------------
+//       if (isPerSession) {
+//         const unbilledSessions = await Session.find({
+//           patientId,
+//           sessionStatusId: new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0"),
+//           isBilled: false,
+//           sessionDate: { $gte: startOfMonth, $lte: endOfMonth }
+//         }).sort({ sessionDate: 1 });
+
+//         // Change this logic if you want to bill even if sessions are < 26 at month end
+//         if (unbilledSessions.length < 26) {
+//           console.log(`[Billing] Skipping ${patient.patientName}: Only ${unbilledSessions.length}/26 sessions found.`);
+//           continue;
+//         }
+
+//         const sessionsToBill = unbilledSessions.slice(0, 26);
+//         const physioId = sessionsToBill[0]?.physioId || patient?.physioId;
+//         if (!physioId) continue;
+
+//         const totalBill = Number(patient?.feeAmount || 0) * 26;
+
+//         const advPaidAgg = await Debit.aggregate([
+//           { $match: { patientId } },
+//           { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
+//         ]);
+//         const usedAdvAgg = await Bill.aggregate([
+//           { $match: { patientId } },
+//           { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
+//         ]);
+        
+//         const availableAdvance = Math.max((advPaidAgg[0]?.total || 0) - (usedAdvAgg[0]?.total || 0), 0);
+//         const deduct = Math.min(availableAdvance, totalBill);
+//         const netBilledAmount = totalBill - deduct;
+
+//         const counter = await Counter.findOneAndUpdate(
+//           { _id: "invoiceNo" },
+//           { $inc: { seq: 1 } },
+//           { new: true, upsert: true }
+//         );
+//         const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
+
+//         const newBill = await Bill.create({
+//           patientId,
+//           invoiceNo,
+//           physioId,
+//           paymentStatus: netBilledAmount <= 0 ? "Paid" : "Pending",
+//           paymentType: netBilledAmount <= 0 ? "Full Payment" : (deduct > 0 ? "Partial Payment" : "Full Payment"),
+//           ReceivedAmount: Number(deduct.toFixed(2)),
+//           TotalBilledAmount: Number(totalBill.toFixed(2)),
+//           DeductedFromAdvance: Number(deduct.toFixed(2)),
+//           NetBilledAmount: Number(netBilledAmount.toFixed(2)),
+//           startDate: sessionsToBill[0].sessionDate,
+//           ToDate: sessionsToBill[sessionsToBill.length - 1].sessionDate,
+//           ratePerSession: Number((patient?.feeAmount || 0).toFixed(2)),
+//           totalAmount: Number(totalBill.toFixed(2)),
+//           TotalSessionCount: 26,
+//           month: monthName,
+//           year: currentYear,
+//           isComplete: netBilledAmount <= 0,
+//           feeType: "persession",
+//         });
+
+//         await Session.updateMany(
+//           { _id: { $in: sessionsToBill.map((s) => s._id) } },
+//           { $set: { isBilled: true, billId: newBill._id } }
+//         );
+
+//         await applyAdvanceAndResetDebit(patientId, deduct);
+//         console.log(`[Billing] Created ${invoiceNo} (26 Sessions) for ${patient.patientName}`);
+//       }
+//     }
+//     console.log(`[Billing] Monthly process completed successfully.`);
+//   } catch (err) {
+//     console.error("Critical Billing Error:", err);
+//   }
+// };
+
 exports.processMonthlyBilling = async () => {
   try {
     const today = new Date();
     
     // 1. CALCULATE LAST DAY OF CURRENT MONTH
-    // Setting day to '0' of the next month gives us the last day of the current month
     const lastDayDateObject = new Date(today.getFullYear(), today.getMonth() + 1, 0);
     const lastDayOfMonth = lastDayDateObject.getDate();
 
     // 2. THE SAFETY GATE
-    // If today is NOT the last day, stop execution immediately.
     if (today.getDate() !== lastDayOfMonth) {
       console.log(`[Billing] Skipping: Today is ${today.getDate()}. Billing will run on the ${lastDayOfMonth}th.`);
       return;
@@ -937,39 +1174,26 @@ exports.processMonthlyBilling = async () => {
       if (!patient) continue;
 
       const feeTypeName = getNormalizedFeeType(patient);
-      const isPerMonth = feeTypeName === "permonth";
-      const isPerSession = feeTypeName === "persession";
 
-      // ---------------------------------------------------------
-      // CASE 1: PER MONTH BILLING
-      // ---------------------------------------------------------
-      if (isPerMonth) {
-        const monthlySessions = await Session.find({
+      if (feeTypeName === "persession") {
+        const unbilledSessions = await Session.find({
           patientId,
           sessionStatusId: new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0"),
-          sessionDate: { $gte: startOfMonth, $lte: endOfMonth },
           isBilled: false,
+          sessionDate: { $gte: startOfMonth, $lte: endOfMonth }
         }).sort({ sessionDate: 1 });
 
-        if (!monthlySessions.length) continue;
-
-        const existingBill = await Bill.findOne({
-          patientId,
-          month: monthName,
-          year: currentYear,
-          feeType: "permonth",
-        });
-
-        if (existingBill) {
-          console.log(`[Billing] Bill already exists for ${patient.patientName} (PerMonth)`);
+        if (unbilledSessions.length < 26) {
+          console.log(`[Billing] Skipping ${patient.patientName}: Only ${unbilledSessions.length}/26 sessions found.`);
           continue;
         }
 
-        const physioId = monthlySessions[0]?.physioId || patient?.physioId;
+        const sessionsToBill = unbilledSessions.slice(0, 26);
+        const physioId = sessionsToBill[0]?.physioId || patient?.physioId;
         if (!physioId) continue;
 
-        const totalBill = Number(patient?.feeAmount || 0);
-        
+        const totalBill = Number(patient?.feeAmount || 0) * 26;
+
         // Calculate Advance Balance
         const advPaidAgg = await Debit.aggregate([
           { $match: { patientId } },
@@ -984,80 +1208,7 @@ exports.processMonthlyBilling = async () => {
         const deduct = Math.min(availableAdvance, totalBill);
         const netBilledAmount = totalBill - deduct;
 
-        // GENERATE UNIQUE INVOICE NO
-        const counter = await Counter.findOneAndUpdate(
-          { _id: "invoiceNo" },
-          { $inc: { seq: 1 } },
-          { new: true, upsert: true }
-        );
-        const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
-
-        const newBill = await Bill.create({
-          patientId,
-          invoiceNo,
-          physioId,
-          paymentStatus: netBilledAmount <= 0 ? "Paid" : "Pending",
-          paymentType: netBilledAmount <= 0 ? "Full Payment" : (deduct > 0 ? "Partial Payment" : "Full Payment"),
-          ReceivedAmount: Number(deduct.toFixed(2)),
-          TotalBilledAmount: Number(totalBill.toFixed(2)),
-          DeductedFromAdvance: Number(deduct.toFixed(2)),
-          NetBilledAmount: Number(netBilledAmount.toFixed(2)),
-          startDate: monthlySessions[0].sessionDate,
-          ToDate: monthlySessions[monthlySessions.length - 1].sessionDate,
-          ratePerSession: 0,
-          totalAmount: Number(totalBill.toFixed(2)),
-          TotalSessionCount: monthlySessions.length,
-          month: monthName,
-          year: currentYear,
-          isComplete: netBilledAmount <= 0,
-          feeType: "permonth",
-        });
-
-        await Session.updateMany(
-          { _id: { $in: monthlySessions.map((s) => s._id) } },
-          { $set: { isBilled: true, billId: newBill._id } }
-        );
-
-        await applyAdvanceAndResetDebit(patientId, deduct);
-        console.log(`[Billing] Created ${invoiceNo} for ${patient.patientName}`);
-      }
-
-      // ---------------------------------------------------------
-      // CASE 2: PER SESSION BILLING
-      // ---------------------------------------------------------
-      if (isPerSession) {
-        const unbilledSessions = await Session.find({
-          patientId,
-          sessionStatusId: new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0"),
-          isBilled: false,
-          sessionDate: { $gte: startOfMonth, $lte: endOfMonth }
-        }).sort({ sessionDate: 1 });
-
-        // Change this logic if you want to bill even if sessions are < 26 at month end
-        if (unbilledSessions.length < 26) {
-          console.log(`[Billing] Skipping ${patient.patientName}: Only ${unbilledSessions.length}/26 sessions found.`);
-          continue;
-        }
-
-        const sessionsToBill = unbilledSessions.slice(0, 26);
-        const physioId = sessionsToBill[0]?.physioId || patient?.physioId;
-        if (!physioId) continue;
-
-        const totalBill = Number(patient?.feeAmount || 0) * 26;
-
-        const advPaidAgg = await Debit.aggregate([
-          { $match: { patientId } },
-          { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
-        ]);
-        const usedAdvAgg = await Bill.aggregate([
-          { $match: { patientId } },
-          { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
-        ]);
-        
-        const availableAdvance = Math.max((advPaidAgg[0]?.total || 0) - (usedAdvAgg[0]?.total || 0), 0);
-        const deduct = Math.min(availableAdvance, totalBill);
-        const netBilledAmount = totalBill - deduct;
-
+        // GENERATE UNIQUE INVOICE NO (Inside Loop for uniqueness)
         const counter = await Counter.findOneAndUpdate(
           { _id: "invoiceNo" },
           { $inc: { seq: 1 } },
@@ -1095,7 +1246,7 @@ exports.processMonthlyBilling = async () => {
         console.log(`[Billing] Created ${invoiceNo} (26 Sessions) for ${patient.patientName}`);
       }
     }
-    console.log(`[Billing] Monthly process completed successfully.`);
+    console.log(`[Billing] Monthly process (PerSession only) completed successfully.`);
   } catch (err) {
     console.error("Critical Billing Error:", err);
   }
@@ -1325,7 +1476,7 @@ exports.initSessionCron = (io) =>
     timezone: "Asia/Kolkata",
   });
 exports.initMonthlyBillingGeneration = () =>
-  cron.schedule("0 8 28-31 * *", () => this.processMonthlyBilling(), {
+  cron.schedule("30 15 28-31 * *", () => this.processMonthlyBilling(), {
   // cron.schedule("59 18 26 * *", () => this.processMonthlyBilling(), {
     // cron.schedule("39 11 23 * *", () => this.processMonthlyBilling(), {
     timezone: "Asia/Kolkata",
