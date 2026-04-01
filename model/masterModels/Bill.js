@@ -9,7 +9,6 @@ const billSchema = new mongoose.Schema(
     },
     invoiceNo: {
       type: String,
-      required: true,
     },
     physioId: {
       type: mongoose.Schema.Types.ObjectId,
