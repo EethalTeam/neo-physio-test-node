@@ -1017,7 +1017,11 @@ exports.updatePatients = async (req, res) => {
       recoveredType,
       isConsentReceived,
     } = req.body;
-
+const counter = await Counter.findOneAndUpdate(
+      { _id: "invoiceNo" },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true },
+    );
     if (!_id) {
       await session.abortTransaction();
       session.endSession();
@@ -1206,7 +1210,7 @@ exports.updatePatients = async (req, res) => {
 
         const deduct = Math.min(Math.max(advPaid - usedAdv, 0), totalBill);
         const netBilledAmount = totalBill - deduct;
-
+const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
         const billDate = new Date(lastDate);
 
         generatedBill = await Bill.create(
@@ -1214,6 +1218,7 @@ exports.updatePatients = async (req, res) => {
             {
               patientId: updatedPatient._id,
               physioId: billPhysioId,
+              invoiceNo,
               paymentStatus: netBilledAmount <= 0 ? "Paid" : "Pending",
               paymentType:
                 netBilledAmount <= 0

@@ -1174,8 +1174,9 @@ exports.processMonthlyBilling = async () => {
       if (!patient) continue;
 
       const feeTypeName = getNormalizedFeeType(patient);
-
+console.log(feeTypeName,"feeTypeName")
       if (feeTypeName === "persession") {
+        console.log("persession billing for:", patient.patientName);
         const unbilledSessions = await Session.find({
           patientId,
           sessionStatusId: new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0"),
@@ -1183,16 +1184,16 @@ exports.processMonthlyBilling = async () => {
           sessionDate: { $gte: startOfMonth, $lte: endOfMonth }
         }).sort({ sessionDate: 1 });
 
-        if (unbilledSessions.length < 26) {
-          console.log(`[Billing] Skipping ${patient.patientName}: Only ${unbilledSessions.length}/26 sessions found.`);
-          continue;
-        }
+       if (unbilledSessions.length === 0) continue;
 
-        const sessionsToBill = unbilledSessions.slice(0, 26);
+       const sessionsToBill = unbilledSessions; 
+        const sessionCount = sessionsToBill.length;
+
         const physioId = sessionsToBill[0]?.physioId || patient?.physioId;
         if (!physioId) continue;
 
-        const totalBill = Number(patient?.feeAmount || 0) * 26;
+        // Total = Rate * however many sessions they actually did
+        const totalBill = Number(patient?.feeAmount || 0) * sessionCount;
 
         // Calculate Advance Balance
         const advPaidAgg = await Debit.aggregate([
@@ -1208,7 +1209,6 @@ exports.processMonthlyBilling = async () => {
         const deduct = Math.min(availableAdvance, totalBill);
         const netBilledAmount = totalBill - deduct;
 
-        // GENERATE UNIQUE INVOICE NO (Inside Loop for uniqueness)
         const counter = await Counter.findOneAndUpdate(
           { _id: "invoiceNo" },
           { $inc: { seq: 1 } },
@@ -1230,7 +1230,7 @@ exports.processMonthlyBilling = async () => {
           ToDate: sessionsToBill[sessionsToBill.length - 1].sessionDate,
           ratePerSession: Number((patient?.feeAmount || 0).toFixed(2)),
           totalAmount: Number(totalBill.toFixed(2)),
-          TotalSessionCount: 26,
+          TotalSessionCount: sessionCount, 
           month: monthName,
           year: currentYear,
           isComplete: netBilledAmount <= 0,
@@ -1243,7 +1243,7 @@ exports.processMonthlyBilling = async () => {
         );
 
         await applyAdvanceAndResetDebit(patientId, deduct);
-        console.log(`[Billing] Created ${invoiceNo} (26 Sessions) for ${patient.patientName}`);
+        console.log(`[Billing] Created ${invoiceNo} (${sessionCount} Sessions) for ${patient.patientName}`);
       }
     }
     console.log(`[Billing] Monthly process (PerSession only) completed successfully.`);
@@ -1476,7 +1476,7 @@ exports.initSessionCron = (io) =>
     timezone: "Asia/Kolkata",
   });
 exports.initMonthlyBillingGeneration = () =>
-  cron.schedule("30 15 28-31 * *", () => this.processMonthlyBilling(), {
+  cron.schedule("0 20 28-31 * *", () => this.processMonthlyBilling(), {
   // cron.schedule("59 18 26 * *", () => this.processMonthlyBilling(), {
     // cron.schedule("39 11 23 * *", () => this.processMonthlyBilling(), {
     timezone: "Asia/Kolkata",
