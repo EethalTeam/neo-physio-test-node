@@ -39,18 +39,46 @@ const getISTDateRange = () => {
   );
   return { start, end };
 };
-
 async function broadcastNotification(admins, message, type, meta, io) {
   for (const admin of admins) {
     try {
-      await Notification.create({
+      //  ADD THIS FILTER
+      const filter = {
+        toEmployeeId: admin._id,
+        type,
+      };
+
+      if (meta?.ReviewId) {
+        filter["meta.ReviewId"] = meta.ReviewId;
+      }
+
+      if (meta?.SessionId) {
+        filter["meta.SessionId"] = meta.SessionId;
+      }
+
+      //  ADD THIS CHECK
+      const existing = await Notification.findOne(filter).lean();
+
+      if (existing) {
+        continue; // skip duplicate
+      }
+
+      // CREATE ONLY IF NOT EXISTS
+      const newNotification = await Notification.create({
         toEmployeeId: admin._id,
         message,
         type,
         status: "unseen",
         meta,
       });
-      if (io) io.to(admin._id.toString()).emit("receiveNotification", message);
+
+      //  CHANGE THIS (send full object, not just message)
+      if (io) {
+        io.to(admin._id.toString()).emit(
+          "receiveNotification",
+          newNotification,
+        );
+      }
     } catch (err) {
       console.error(`❌ Notification Error:`, err.message);
     }
@@ -865,7 +893,7 @@ exports.processSessionPendingCheck = async (io) => {
 // exports.processMonthlyBilling = async () => {
 //   try {
 //     const today = new Date();
-    
+
 //     // 1. CALCULATE LAST DAY OF CURRENT MONTH
 //     // Setting day to '0' of the next month gives us the last day of the current month
 //     const lastDayDateObject = new Date(today.getFullYear(), today.getMonth() + 1, 0);
@@ -969,7 +997,7 @@ exports.processSessionPendingCheck = async (io) => {
 //         if (!physioId) continue;
 
 //         const totalBill = Number(patient?.feeAmount || 0);
-        
+
 //         // Calculate Advance Balance
 //         const advPaidAgg = await Debit.aggregate([
 //           { $match: { patientId } },
@@ -979,7 +1007,7 @@ exports.processSessionPendingCheck = async (io) => {
 //           { $match: { patientId } },
 //           { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
 //         ]);
-        
+
 //         const availableAdvance = Math.max((advPaidAgg[0]?.total || 0) - (usedAdvAgg[0]?.total || 0), 0);
 //         const deduct = Math.min(availableAdvance, totalBill);
 //         const netBilledAmount = totalBill - deduct;
@@ -1053,7 +1081,7 @@ exports.processSessionPendingCheck = async (io) => {
 //           { $match: { patientId } },
 //           { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
 //         ]);
-        
+
 //         const availableAdvance = Math.max((advPaidAgg[0]?.total || 0) - (usedAdvAgg[0]?.total || 0), 0);
 //         const deduct = Math.min(availableAdvance, totalBill);
 //         const netBilledAmount = totalBill - deduct;
@@ -1104,31 +1132,57 @@ exports.processSessionPendingCheck = async (io) => {
 exports.processMonthlyBilling = async () => {
   try {
     const today = new Date();
-    
+
     // 1. CALCULATE LAST DAY OF CURRENT MONTH
-    const lastDayDateObject = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    const lastDayDateObject = new Date(
+      today.getFullYear(),
+      today.getMonth() + 1,
+      0,
+    );
     const lastDayOfMonth = lastDayDateObject.getDate();
 
     // 2. THE SAFETY GATE
     if (today.getDate() !== lastDayOfMonth) {
-      console.log(`[Billing] Skipping: Today is ${today.getDate()}. Billing will run on the ${lastDayOfMonth}th.`);
+      console.log(
+        `[Billing] Skipping: Today is ${today.getDate()}. Billing will run on the ${lastDayOfMonth}th.`,
+      );
       return;
     }
 
-    console.log(`[Billing] Starting month-end processing for ${today.toDateString()}...`);
+    console.log(
+      `[Billing] Starting month-end processing for ${today.toDateString()}...`,
+    );
 
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
-    const endOfMonth = new Date(today.getFullYear(), today.getMonth(), lastDayOfMonth, 23, 59, 59, 999);
+    const startOfMonth = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      1,
+      0,
+      0,
+      0,
+      0,
+    );
+    const endOfMonth = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      lastDayOfMonth,
+      23,
+      59,
+      59,
+      999,
+    );
 
     const monthName = today.toLocaleString("default", { month: "long" });
     const currentYear = today.getFullYear();
 
     // Helper: Normalize Fee Type
     const getNormalizedFeeType = (patient) => {
-      const type = patient?.FeesTypeId?.FeesTypeName ||
-                   patient?.FeesTypeId?.feesTypeName ||
-                   patient?.FeesTypeId?.name ||
-                   patient?.FeesTypeId?.feeTypeName || "";
+      const type =
+        patient?.FeesTypeId?.FeesTypeName ||
+        patient?.FeesTypeId?.feesTypeName ||
+        patient?.FeesTypeId?.name ||
+        patient?.FeesTypeId?.feeTypeName ||
+        "";
       return String(type).trim().toLowerCase().replace(/\s+/g, "");
     };
 
@@ -1150,7 +1204,9 @@ exports.processMonthlyBilling = async () => {
           remainingDeduct -= currentDebitAmount;
           debit.DebitAmount = 0;
         } else {
-          debit.DebitAmount = Number((currentDebitAmount - remainingDeduct).toFixed(2));
+          debit.DebitAmount = Number(
+            (currentDebitAmount - remainingDeduct).toFixed(2),
+          );
           remainingDeduct = 0;
         }
         await debit.save();
@@ -1161,7 +1217,9 @@ exports.processMonthlyBilling = async () => {
     const patientsWithUnbilledSessions = await Session.aggregate([
       {
         $match: {
-          sessionStatusId: new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0"),
+          sessionStatusId: new mongoose.Types.ObjectId(
+            "691ec69eae0e10763c8f21e0",
+          ),
           isBilled: false,
         },
       },
@@ -1174,19 +1232,21 @@ exports.processMonthlyBilling = async () => {
       if (!patient) continue;
 
       const feeTypeName = getNormalizedFeeType(patient);
-console.log(feeTypeName,"feeTypeName")
+      console.log(feeTypeName, "feeTypeName");
       if (feeTypeName === "persession") {
         console.log("persession billing for:", patient.patientName);
         const unbilledSessions = await Session.find({
           patientId,
-          sessionStatusId: new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0"),
+          sessionStatusId: new mongoose.Types.ObjectId(
+            "691ec69eae0e10763c8f21e0",
+          ),
           isBilled: false,
-          sessionDate: { $gte: startOfMonth, $lte: endOfMonth }
+          sessionDate: { $gte: startOfMonth, $lte: endOfMonth },
         }).sort({ sessionDate: 1 });
 
-       if (unbilledSessions.length === 0) continue;
+        if (unbilledSessions.length === 0) continue;
 
-       const sessionsToBill = unbilledSessions; 
+        const sessionsToBill = unbilledSessions;
         const sessionCount = sessionsToBill.length;
 
         const physioId = sessionsToBill[0]?.physioId || patient?.physioId;
@@ -1204,15 +1264,18 @@ console.log(feeTypeName,"feeTypeName")
           { $match: { patientId } },
           { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
         ]);
-        
-        const availableAdvance = Math.max((advPaidAgg[0]?.total || 0) - (usedAdvAgg[0]?.total || 0), 0);
+
+        const availableAdvance = Math.max(
+          (advPaidAgg[0]?.total || 0) - (usedAdvAgg[0]?.total || 0),
+          0,
+        );
         const deduct = Math.min(availableAdvance, totalBill);
         const netBilledAmount = totalBill - deduct;
 
         const counter = await Counter.findOneAndUpdate(
           { _id: "invoiceNo" },
           { $inc: { seq: 1 } },
-          { new: true, upsert: true }
+          { new: true, upsert: true },
         );
         const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
 
@@ -1221,7 +1284,12 @@ console.log(feeTypeName,"feeTypeName")
           invoiceNo,
           physioId,
           paymentStatus: netBilledAmount <= 0 ? "Paid" : "Pending",
-          paymentType: netBilledAmount <= 0 ? "Full Payment" : (deduct > 0 ? "Partial Payment" : "Full Payment"),
+          paymentType:
+            netBilledAmount <= 0
+              ? "Full Payment"
+              : deduct > 0
+                ? "Partial Payment"
+                : "Full Payment",
           ReceivedAmount: Number(deduct.toFixed(2)),
           TotalBilledAmount: Number(totalBill.toFixed(2)),
           DeductedFromAdvance: Number(deduct.toFixed(2)),
@@ -1230,7 +1298,7 @@ console.log(feeTypeName,"feeTypeName")
           ToDate: sessionsToBill[sessionsToBill.length - 1].sessionDate,
           ratePerSession: Number((patient?.feeAmount || 0).toFixed(2)),
           totalAmount: Number(totalBill.toFixed(2)),
-          TotalSessionCount: sessionCount, 
+          TotalSessionCount: sessionCount,
           month: monthName,
           year: currentYear,
           isComplete: netBilledAmount <= 0,
@@ -1239,14 +1307,18 @@ console.log(feeTypeName,"feeTypeName")
 
         await Session.updateMany(
           { _id: { $in: sessionsToBill.map((s) => s._id) } },
-          { $set: { isBilled: true, billId: newBill._id } }
+          { $set: { isBilled: true, billId: newBill._id } },
         );
 
         await applyAdvanceAndResetDebit(patientId, deduct);
-        console.log(`[Billing] Created ${invoiceNo} (${sessionCount} Sessions) for ${patient.patientName}`);
+        console.log(
+          `[Billing] Created ${invoiceNo} (${sessionCount} Sessions) for ${patient.patientName}`,
+        );
       }
     }
-    console.log(`[Billing] Monthly process (PerSession only) completed successfully.`);
+    console.log(
+      `[Billing] Monthly process (PerSession only) completed successfully.`,
+    );
   } catch (err) {
     console.error("Critical Billing Error:", err);
   }
@@ -1357,22 +1429,42 @@ exports.processMonthlyPayroll = async () => {
 
     /**
      * SAFETY GATE:
-     * Your cycle ends on the 20th. We should generate the payroll on the 21st 
+     * Your cycle ends on the 20th. We should generate the payroll on the 21st
      * to ensure all data from the 20th has been synced/uploaded.
      */
     if (today.getDate() !== 21) {
-      console.log(`[Payroll] Skipping: Today is the ${today.getDate()}th. Payroll generation is set for the 21st.`);
+      console.log(
+        `[Payroll] Skipping: Today is the ${today.getDate()}th. Payroll generation is set for the 21st.`,
+      );
       return;
     }
 
     // RANGE CALCULATION: 20th of last month to 20th of this month
-    const startRange = new Date(today.getFullYear(), today.getMonth() - 1, 20, 0, 0, 0, 0);
-    const endRange = new Date(today.getFullYear(), today.getMonth(), 20, 23, 59, 59, 999);
+    const startRange = new Date(
+      today.getFullYear(),
+      today.getMonth() - 1,
+      20,
+      0,
+      0,
+      0,
+      0,
+    );
+    const endRange = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      20,
+      23,
+      59,
+      59,
+      999,
+    );
 
     const payrollMonth = today.toLocaleString("default", { month: "long" });
     const payrollYear = today.getFullYear();
 
-    console.log(`[Payroll] Starting generation for ${payrollMonth} ${payrollYear} (Cycle: 20th to 20th)`);
+    console.log(
+      `[Payroll] Starting generation for ${payrollMonth} ${payrollYear} (Cycle: 20th to 20th)`,
+    );
 
     const physios = await Physio.find({ isActive: true });
 
@@ -1396,7 +1488,9 @@ exports.processMonthlyPayroll = async () => {
           $match: {
             physioId: p._id,
             sessionDate: { $gte: startRange, $lte: endRange },
-            sessionStatusId: new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0"),
+            sessionStatusId: new mongoose.Types.ObjectId(
+              "691ec69eae0e10763c8f21e0",
+            ),
           },
         },
         { $group: { _id: null, count: { $sum: 1 } } },
@@ -1420,11 +1514,11 @@ exports.processMonthlyPayroll = async () => {
       // Deduction logic: Salary / 30 days * number of leaves
       const deductionAmount = Math.round((baseSalary / 30) * leavesCount);
 
-      const grossSalary = 
-        baseSalary + 
-        vehicleMaintenance + 
-        (incentivePerSession * completedSessions) + 
-        (totalKms * petrolRatePerKm);
+      const grossSalary =
+        baseSalary +
+        vehicleMaintenance +
+        incentivePerSession * completedSessions +
+        totalKms * petrolRatePerKm;
 
       const netSalary = grossSalary - deductionAmount;
 
@@ -1444,12 +1538,14 @@ exports.processMonthlyPayroll = async () => {
           TotalAmountDeducted: deductionAmount,
           payrRollCompletedSessions: completedSessions,
           // Added metadata for audit logs
-          calculationCycle: `${startRange.toDateString()} to ${endRange.toDateString()}`
+          calculationCycle: `${startRange.toDateString()} to ${endRange.toDateString()}`,
         },
-        { upsert: true, new: true }
+        { upsert: true, new: true },
       );
 
-      console.log(`[Payroll] Processed: ${p.physioName || p._id} | Net: ${Math.round(netSalary)}`);
+      console.log(
+        `[Payroll] Processed: ${p.physioName || p._id} | Net: ${Math.round(netSalary)}`,
+      );
     }
 
     console.log(`[Payroll] Monthly processing finished successfully.`);
@@ -1457,7 +1553,6 @@ exports.processMonthlyPayroll = async () => {
     console.error("Critical Payroll Error:", err);
   }
 };
-
 
 exports.initDailySessionGeneration = () =>
   cron.schedule("00 5 * * 1-6", () => this.processDailySessionGeneration(), {
@@ -1477,7 +1572,7 @@ exports.initSessionCron = (io) =>
   });
 exports.initMonthlyBillingGeneration = () =>
   cron.schedule("0 20 28-31 * *", () => this.processMonthlyBilling(), {
-  // cron.schedule("59 18 26 * *", () => this.processMonthlyBilling(), {
+    // cron.schedule("59 18 26 * *", () => this.processMonthlyBilling(), {
     // cron.schedule("39 11 23 * *", () => this.processMonthlyBilling(), {
     timezone: "Asia/Kolkata",
   });

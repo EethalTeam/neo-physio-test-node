@@ -498,28 +498,55 @@ exports.getAllBill = async (req, res) => {
   try {
     const { month, year, patientId } = req.body;
 
-    const query = {};
+    const monthNames = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
 
-    if (month && month !== "ALL") {
-      query.month = String(month).trim();
-    }
-
-    if (year && year !== "ALL") {
-      query.year = Number(year);
-    }
+    let filter = {};
 
     if (patientId && patientId !== "ALL") {
-      query.patientId = patientId;
+      filter.patientId = patientId;
     }
 
-    const bills = await Bill.find(query)
-      .populate("physioId", "physioName")
+    if (month && year) {
+      const monthIndex = monthNames.findIndex(
+        (m) => m.toLowerCase() === String(month).toLowerCase(),
+      );
+
+      if (monthIndex !== -1) {
+        const startDate = new Date(Number(year), monthIndex, 1, 0, 0, 0, 0);
+        const endDate = new Date(Number(year), monthIndex + 1, 1, 0, 0, 0, 0);
+
+        filter.createdAt = {
+          $gte: startDate,
+          $lt: endDate,
+        };
+      }
+    }
+
+    const bills = await Bill.find(filter)
       .populate("patientId")
+      .populate("physioId")
       .sort({ createdAt: -1 });
 
     return res.status(200).json(bills);
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    console.error("getAllBill error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch bills",
+    });
   }
 };
 
@@ -590,14 +617,18 @@ exports.deleteAllBillsAndResetSessions = async (req, res) => {
 
 exports.revertBillingStatusGlobal = async (req, res) => {
   try {
-    const { monthName, year } = req.body; 
+    const { monthName, year } = req.body;
     // Example req.body: { "monthName": "March", "year": 2026 }
 
     if (!monthName || !year) {
-      return res.status(400).json({ message: "Please provide monthName (e.g. 'March') and year." });
+      return res
+        .status(400)
+        .json({ message: "Please provide monthName (e.g. 'March') and year." });
     }
 
-    const targetFeesTypeId = new mongoose.Types.ObjectId("691af5dc43be7d5e28619825");
+    const targetFeesTypeId = new mongoose.Types.ObjectId(
+      "691af5dc43be7d5e28619825",
+    );
 
     // 1. Calculate Date Range for the provided Month/Year
     const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth(); // Converts "March" to 2
@@ -605,15 +636,19 @@ exports.revertBillingStatusGlobal = async (req, res) => {
     const endDate = new Date(year, monthIndex + 1, 0, 23, 59, 59, 999);
 
     console.log(`[Revert] Targeting FeesType: ${targetFeesTypeId}`);
-    console.log(`[Revert] Range: ${startDate.toDateString()} to ${endDate.toDateString()}`);
+    console.log(
+      `[Revert] Range: ${startDate.toDateString()} to ${endDate.toDateString()}`,
+    );
 
     // 2. Get all Patient IDs for this specific FeesType
-    const patients = await Patient.find({ FeesTypeId: targetFeesTypeId }).select("_id");
-    const patientIds = patients.map(p => p._id);
+    const patients = await Patient.find({
+      FeesTypeId: targetFeesTypeId,
+    }).select("_id");
+    const patientIds = patients.map((p) => p._id);
 
     if (patientIds.length === 0) {
-      return res.status(404).json({ 
-        message: `No patients found for FeesType 691af5dc43be7d5e28619825` 
+      return res.status(404).json({
+        message: `No patients found for FeesType 691af5dc43be7d5e28619825`,
       });
     }
 
@@ -623,37 +658,38 @@ exports.revertBillingStatusGlobal = async (req, res) => {
       {
         patientId: { $in: patientIds },
         sessionDate: { $gte: startDate, $lte: endDate },
-        isBilled: true
+        isBilled: true,
       },
       {
-        $set: { 
+        $set: {
           isBilled: false,
-          billId: null // Clear the reference to the incorrect bill
-        }
-      }
+          billId: null, // Clear the reference to the incorrect bill
+        },
+      },
     );
 
     return res.status(200).json({
       success: true,
       message: `Successfully reverted sessions for ${monthName} ${year}`,
       affectedPatients: patientIds.length,
-      sessionsUpdated: result.modifiedCount
+      sessionsUpdated: result.modifiedCount,
     });
-
   } catch (err) {
     console.error("Global Revert Error:", err);
-    return res.status(500).json({ 
-      success: false, 
+    return res.status(500).json({
+      success: false,
       error: "Ensure month name is spelled correctly (e.g., 'March').",
-      details: err.message 
+      details: err.message,
     });
   }
 };
 
 exports.syncCorrectMarchBillsFixed = async (req, res) => {
   try {
-    const { month, year } = req.body; 
-    const completedStatusId = new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0");
+    const { month, year } = req.body;
+    const completedStatusId = new mongoose.Types.ObjectId(
+      "691ec69eae0e10763c8f21e0",
+    );
 
     // 1. Calculate the Date Range for the month
     const monthIndex = new Date(`${month} 1, ${year}`).getMonth();
@@ -669,11 +705,11 @@ exports.syncCorrectMarchBillsFixed = async (req, res) => {
       {
         sessionDate: { $gte: startDateRange, $lte: endDateRange },
         sessionStatusId: { $ne: completedStatusId },
-        isBilled: true
+        isBilled: true,
       },
       {
-        $set: { isBilled: false, billId: null }
-      }
+        $set: { isBilled: false, billId: null },
+      },
     );
 
     // STEP 2: GET VALID BILLS
@@ -682,10 +718,10 @@ exports.syncCorrectMarchBillsFixed = async (req, res) => {
       .lean();
 
     if (validBills.length === 0) {
-      return res.status(200).json({ 
-        success: true, 
-        message: "No valid bills found. Safety reset completed.", 
-        nonCompletedReset: safetyReset.modifiedCount 
+      return res.status(200).json({
+        success: true,
+        message: "No valid bills found. Safety reset completed.",
+        nonCompletedReset: safetyReset.modifiedCount,
       });
     }
 
@@ -698,21 +734,21 @@ exports.syncCorrectMarchBillsFixed = async (req, res) => {
         {
           patientId: bill.patientId?._id,
           sessionDate: { $gte: bill.startDate, $lte: bill.ToDate },
-          sessionStatusId: completedStatusId // Only Completed
+          sessionStatusId: completedStatusId, // Only Completed
         },
         {
-          $set: { 
-            isBilled: true, 
-            billId: bill._id 
-          }
-        }
+          $set: {
+            isBilled: true,
+            billId: bill._id,
+          },
+        },
       );
 
       processDetails.push({
         patientName: bill.patientId?.patientName || "Unknown Patient",
         invoiceNo: bill.invoiceNo,
         sessionsFixed: result.modifiedCount,
-        billPeriod: `${bill.startDate.toISOString().split('T')[0]} to ${bill.ToDate.toISOString().split('T')[0]}`
+        billPeriod: `${bill.startDate.toISOString().split("T")[0]} to ${bill.ToDate.toISOString().split("T")[0]}`,
       });
 
       totalSessionsRestored += result.modifiedCount;
@@ -723,17 +759,16 @@ exports.syncCorrectMarchBillsFixed = async (req, res) => {
       summary: {
         totalBillsProcessed: validBills.length,
         totalCompletedSessionsRestored: totalSessionsRestored,
-        nonCompletedSessionsCleaned: safetyReset.modifiedCount
+        nonCompletedSessionsCleaned: safetyReset.modifiedCount,
       },
-      details: processDetails
+      details: processDetails,
     });
-
   } catch (err) {
     console.error("Sync Fixed Error:", err);
-    return res.status(500).json({ 
-      success: false, 
-      error: "Detailed Sync failed", 
-      message: err.message 
+    return res.status(500).json({
+      success: false,
+      error: "Detailed Sync failed",
+      message: err.message,
     });
   }
 };
@@ -748,57 +783,61 @@ exports.getSessionBillingAudit = async (req, res) => {
     const startDate = new Date(year, monthIndex, 1, 0, 0, 0, 0);
     const endDate = new Date(year, monthIndex + 1, 0, 23, 59, 59, 999);
 
-    const completedStatusId = new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0");
+    const completedStatusId = new mongoose.Types.ObjectId(
+      "691ec69eae0e10763c8f21e0",
+    );
 
     // 2. Aggregate counts
     const auditData = await Session.aggregate([
       {
         $match: {
           sessionDate: { $gte: startDate, $lte: endDate },
-          sessionStatusId: completedStatusId
-        }
+          sessionStatusId: completedStatusId,
+        },
       },
       {
         $group: {
           _id: null,
           totalCompleted: { $sum: 1 },
           billedCount: {
-            $sum: { $cond: [{ $eq: ["$isBilled", true] }, 1, 0] }
+            $sum: { $cond: [{ $eq: ["$isBilled", true] }, 1, 0] },
           },
           unbilledCount: {
-            $sum: { $cond: [{ $eq: ["$isBilled", false] }, 1, 0] }
-          }
-        }
-      }
+            $sum: { $cond: [{ $eq: ["$isBilled", false] }, 1, 0] },
+          },
+        },
+      },
     ]);
 
     // 3. Handle empty results
     const result = auditData[0] || {
       totalCompleted: 0,
       billedCount: 0,
-      unbilledCount: 0
+      unbilledCount: 0,
     };
 
     return res.status(200).json({
       success: true,
       queryRange: {
         from: startDate.toDateString(),
-        to: endDate.toDateString()
+        to: endDate.toDateString(),
       },
       data: {
         totalCompletedSessions: result.totalCompleted,
         alreadyBilled: result.billedCount,
         pendingToBeBilled: result.unbilledCount,
-        status: result.unbilledCount > 0 ? "Pending Actions Required" : "All Sessions Billed"
-      }
+        status:
+          result.unbilledCount > 0
+            ? "Pending Actions Required"
+            : "All Sessions Billed",
+      },
     });
-
   } catch (err) {
     console.error("Audit Error:", err);
-    return res.status(500).json({ 
-      success: false, 
+    return res.status(500).json({
+      success: false,
       message: "Could not retrieve session audit.",
-      error: err.message 
+      error: err.message,
     });
   }
 };
