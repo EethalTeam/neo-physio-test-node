@@ -133,10 +133,18 @@ router.post("/Credit/updateCredit", CreditControllers.updateCreditPayment);
 router.post("/Credit/deleteCredit", CreditControllers.deleteCreditPayment);
 router.post("/Credit/payCredit", CreditControllers.payCredit);
 //Leads
-router.post("/Lead/createLead", LeadControllers.createLead);
+router.post(
+  "/Lead/createLead",
+  LeadControllers.leadUploadMiddleware,
+  LeadControllers.createLead,
+);
 router.post("/Lead/getAllLead", LeadControllers.getAllLeads);
 router.post("/Lead/getSingleLead", LeadControllers.getLeadById);
-router.post("/Lead/updateLead", LeadControllers.updateLead);
+router.post(
+  "/Lead/updateLead",
+  LeadControllers.leadUploadMiddleware,
+  LeadControllers.updateLead,
+);
 router.post("/Lead/deleteLead", LeadControllers.deleteLead);
 router.post("/Lead/QualifyLead", LeadControllers.QualifyLead);
 
@@ -151,8 +159,14 @@ router.post(
   "/Bill/resetIsBilled",
   BillCountrollers.deleteAllBillsAndResetSessions,
 );
-router.post("/revertBillingStatusGlobal", BillCountrollers.revertBillingStatusGlobal);
-router.post("/syncCorrectMarchBillsFixed", BillCountrollers.syncCorrectMarchBillsFixed);
+router.post(
+  "/revertBillingStatusGlobal",
+  BillCountrollers.revertBillingStatusGlobal,
+);
+router.post(
+  "/syncCorrectMarchBillsFixed",
+  BillCountrollers.syncCorrectMarchBillsFixed,
+);
 router.post("/getSessionBillingAudit", BillCountrollers.getSessionBillingAudit);
 
 router.post("/Leave/resetLeaveModule", LeaveControllers.resetLeaveModule);
@@ -309,6 +323,7 @@ router.post("/Dashboard/getTodayIncome", DashBoardControllers.getTodayIncome);
 //ConsultationControllers
 router.post(
   "/Consultation/createConsultation",
+  ConsultationControllers.consultationUploadMiddleware,
   ConsultationControllers.createConsultation,
 );
 router.post(
@@ -321,6 +336,7 @@ router.post(
 );
 router.post(
   "/Consultation/updateConsultation",
+  ConsultationControllers.consultationUploadMiddleware,
   ConsultationControllers.updateConsultation,
 );
 router.post(

@@ -9,7 +9,89 @@ const Review = require("../../model/masterModels/Review");
 const ReviewType = require("../../model/masterModels/ReviewType");
 const ReviewStatus = require("../../model/masterModels/ReviewStatus");
 const TreatmentCycle = require("../../model/masterModels/TreatmentCycle");
+const fs = require("fs");
+const path = require("path");
+const multer = require("multer");
 
+const uploadDir = "uploads/consultations";
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    cb(
+      null,
+      `consultation-${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(
+        file.originalname,
+      )}`,
+    );
+  },
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowedMimeTypes = [
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ];
+
+  if (allowedMimeTypes.includes(file.mimetype)) {
+    return cb(null, true);
+  }
+
+  cb(
+    new Error(
+      "Only jpg, jpeg, png, pdf, doc, docx, xls, xlsx files are allowed!",
+    ),
+  );
+};
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 50 * 1024 * 1024 },
+}).array("consultationDocuments", 10);
+
+exports.consultationUploadMiddleware = (req, res, next) => {
+  upload(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({
+        message:
+          err.code === "LIMIT_FILE_SIZE"
+            ? "File too large (Max 50MB)"
+            : err.message,
+      });
+    } else if (err) {
+      return res.status(400).json({ message: err.message });
+    }
+    next();
+  });
+};
+
+const toBoolean = (value, defaultValue = false) => {
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  if (value === "" || value === undefined || value === null)
+    return defaultValue;
+  return Boolean(value);
+};
+
+const toNullableObjectId = (value) => {
+  return value && value !== "" ? value : null;
+};
+
+const toNullableNumber = (value) => {
+  return value === "" || value === undefined || value === null
+    ? null
+    : Number(value);
+};
 // Create a new Patient
 exports.createConsultation = async (req, res) => {
   try {
@@ -73,23 +155,41 @@ exports.createConsultation = async (req, res) => {
       feeAmount,
       ReferenceId,
     } = req.body;
-    // Check for duplicates (if needed)
+
     const existingConsultate = await Consultation.findOne({
       patientCode: patientCode,
     });
+
     if (existingConsultate) {
       return res
         .status(400)
-        .json({ message: "Consulation with this code  already exists" });
+        .json({ message: "Consulation with this code already exists" });
     }
-    // Create and save the Patient
+
+    let consultationDocuments = [];
+
+    if (req.files && req.files.length > 0) {
+      consultationDocuments = req.files.map((file) => ({
+        fileName: file.originalname,
+        fileUrl: `/uploads/consultations/${file.filename}`,
+        fileType: file.mimetype,
+      }));
+    }
+    const finalReferenceId = toNullableObjectId(ReferenceId);
+    const finalFeesTypeId = toNullableObjectId(FeesTypeId);
+
+    const finalHistoryOfFall = toBoolean(historyOfFall, false);
+    const finalHistoryOfSurgery = toBoolean(historyOfSurgery, false);
+    const finalSmokingOrAlcohol = toBoolean(smokingOrAlcohol, false);
+    const finalModalities = toBoolean(Modalities, false);
+    const finalIsActive = toBoolean(isActive, true);
     const consultate = new Consultation({
       patientName,
       patientCode,
-      isActive,
+      isActive: finalIsActive,
       consultationDate,
-      historyOfFall,
-      historyOfSurgery,
+      historyOfFall: finalHistoryOfFall,
+      historyOfSurgery: finalHistoryOfSurgery,
       historyOfSurgeryDetails,
       historyOfFallDetails,
       patientAge,
@@ -107,7 +207,8 @@ exports.createConsultation = async (req, res) => {
       otherMedCon,
       currMed,
       typesOfLifeStyle,
-      smokingOrAlcohol,
+
+      smokingOrAlcohol: finalSmokingOrAlcohol,
       dietaryHabits,
       Contraindications,
       painLevel,
@@ -123,7 +224,7 @@ exports.createConsultation = async (req, res) => {
       Frequency,
       Duration,
       noOfDays,
-      Modalities,
+      Modalities: finalModalities,
       targetedArea,
       hodNotes,
       Physiotherapist,
@@ -139,10 +240,12 @@ exports.createConsultation = async (req, res) => {
       Satisfaction,
       kmsFromPrevious,
       reviewFrequency,
-      FeesTypeId,
+      FeesTypeId: finalFeesTypeId,
       feeAmount,
-      ReferenceId,
+      ReferenceId: finalReferenceId,
+      consultationDocuments,
     });
+
     await consultate.save();
 
     res.status(200).json({
@@ -248,18 +351,70 @@ exports.updateConsultation = async (req, res) => {
       FeesTypeId,
       feeAmount,
       ReferenceId,
+      removedDocuments,
     } = req.body;
 
+    const consultation = await Consultation.findById(_id);
+
+    if (!consultation) {
+      return res.status(404).json({ message: "Consultation not found" });
+    }
+
+    let existingDocuments = consultation.consultationDocuments || [];
+
+    if (removedDocuments) {
+      let removedDocsArray = [];
+
+      try {
+        removedDocsArray =
+          typeof removedDocuments === "string"
+            ? JSON.parse(removedDocuments)
+            : removedDocuments;
+      } catch (e) {
+        removedDocsArray = [];
+      }
+
+      existingDocuments = existingDocuments.filter((doc) => {
+        const shouldRemove = removedDocsArray.includes(doc.fileUrl);
+
+        if (shouldRemove) {
+          const fullPath = path.join(__dirname, "../../", doc.fileUrl);
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+          }
+        }
+
+        return !shouldRemove;
+      });
+    }
+
+    if (req.files && req.files.length > 0) {
+      const newDocuments = req.files.map((file) => ({
+        fileName: file.originalname,
+        fileUrl: `/uploads/consultations/${file.filename}`,
+        fileType: file.mimetype,
+      }));
+
+      existingDocuments.push(...newDocuments);
+    }
+    const finalReferenceId = toNullableObjectId(ReferenceId);
+    const finalFeesTypeId = toNullableObjectId(FeesTypeId);
+
+    const finalHistoryOfFall = toBoolean(historyOfFall, false);
+    const finalHistoryOfSurgery = toBoolean(historyOfSurgery, false);
+    const finalSmokingOrAlcohol = toBoolean(smokingOrAlcohol, false);
+    const finalModalities = toBoolean(Modalities, false);
+    const finalIsActive = toBoolean(isActive, true);
     const consultate = await Consultation.findByIdAndUpdate(
       _id,
       {
         $set: {
           patientName,
           patientCode,
-          isActive,
+          isActive: finalIsActive,
           consultationDate,
-          historyOfFall,
-          historyOfSurgery,
+          historyOfFall: finalHistoryOfFall,
+          historyOfSurgery: finalHistoryOfSurgery,
           historyOfSurgeryDetails,
           historyOfFallDetails,
           patientAge,
@@ -277,7 +432,7 @@ exports.updateConsultation = async (req, res) => {
           otherMedCon,
           currMed,
           typesOfLifeStyle,
-          smokingOrAlcohol,
+          smokingOrAlcohol: finalSmokingOrAlcohol,
           dietaryHabits,
           Contraindications,
           painLevel,
@@ -293,7 +448,7 @@ exports.updateConsultation = async (req, res) => {
           Frequency,
           Duration,
           noOfDays,
-          Modalities,
+          Modalities: finalModalities,
           targetedArea,
           hodNotes,
           Physiotherapist,
@@ -309,9 +464,10 @@ exports.updateConsultation = async (req, res) => {
           Satisfaction,
           kmsFromPrevious,
           reviewFrequency,
-          FeesTypeId,
+          FeesTypeId: finalFeesTypeId,
           feeAmount,
-          ReferenceId,
+          ReferenceId: finalReferenceId,
+          consultationDocuments: existingDocuments,
         },
       },
       { new: true, runValidators: true },
@@ -323,9 +479,10 @@ exports.updateConsultation = async (req, res) => {
         .json({ message: "consultate Cant able to update" });
     }
 
-    res
-      .status(200)
-      .json({ message: "consultate updated successfully", data: consultate });
+    res.status(200).json({
+      message: "consultate updated successfully",
+      data: consultate,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -581,6 +738,58 @@ exports.AssignPhysio = async (req, res) => {
     } = updatedConsultation;
 
     // -----------------------------
+    // Safe fix for MedicalHistoryAndRiskFactor
+    // -----------------------------
+    let safeMedicalHistoryAndRiskFactor = [];
+
+    if (Array.isArray(MedicalHistoryAndRiskFactor)) {
+      safeMedicalHistoryAndRiskFactor = MedicalHistoryAndRiskFactor.filter(
+        (item) => item && typeof item === "object" && !Array.isArray(item),
+      )
+        .map((item) => ({
+          RiskFactorID:
+            item.RiskFactorID && typeof item.RiskFactorID === "object"
+              ? item.RiskFactorID._id || item.RiskFactorID
+              : item.RiskFactorID || null,
+          isExist:
+            item.isExist === true ||
+            item.isExist === "true" ||
+            item.isExist === "Yes" ||
+            item.isExist === "yes",
+        }))
+        .filter((item) => item.RiskFactorID);
+    } else if (
+      typeof MedicalHistoryAndRiskFactor === "string" &&
+      MedicalHistoryAndRiskFactor.trim() !== ""
+    ) {
+      try {
+        const parsedValue = JSON.parse(MedicalHistoryAndRiskFactor);
+
+        if (Array.isArray(parsedValue)) {
+          safeMedicalHistoryAndRiskFactor = parsedValue
+            .filter(
+              (item) =>
+                item && typeof item === "object" && !Array.isArray(item),
+            )
+            .map((item) => ({
+              RiskFactorID:
+                item.RiskFactorID && typeof item.RiskFactorID === "object"
+                  ? item.RiskFactorID._id || item.RiskFactorID
+                  : item.RiskFactorID || null,
+              isExist:
+                item.isExist === true ||
+                item.isExist === "true" ||
+                item.isExist === "Yes" ||
+                item.isExist === "yes",
+            }))
+            .filter((item) => item.RiskFactorID);
+        }
+      } catch (error) {
+        safeMedicalHistoryAndRiskFactor = [];
+      }
+    }
+
+    // -----------------------------
     // Generate patient code
     // -----------------------------
     const lastHnpPatient = await Patient.findOne({
@@ -623,12 +832,10 @@ exports.AssignPhysio = async (req, res) => {
       patientAltNum,
       patientAddress,
       patientPinCode,
-
       patientCondition: otherMedCon || patientCondition,
-
       physioId,
       reviewDate,
-      MedicalHistoryAndRiskFactor,
+      MedicalHistoryAndRiskFactor: safeMedicalHistoryAndRiskFactor,
       otherMedCon,
       currMed,
       typesOfLifeStyle,

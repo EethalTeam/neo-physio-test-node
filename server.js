@@ -31,10 +31,10 @@ app.use(
         req.rawBody = buf; // Save the raw buffer to the request object
       },
     },
-    { limit: "10mb" },
+    { limit: "15mb" },
   ),
 );
-app.use(express.urlencoded({ limit: "10mb", extended: true }));
+app.use(express.urlencoded({ limit: "15mb", extended: true }));
 app.use(
   cors({
     origin: true,
@@ -55,6 +55,7 @@ app.get("/privacy", (req, res) => {
   `);
 });
 app.use("/physioPic", express.static(path.join(__dirname, "physioPic")));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/api", masterRoutes);
 app.use("/api", mainRoutes);
 

@@ -9,6 +9,71 @@ const fs = require("fs");
 const path = require("path");
 const mongoose = require("mongoose");
 const Link = require("../../model/masterModels/Link");
+const multer = require("multer");
+
+// --- MULTER CONFIGURATION FOR LEAD DOCUMENTS ---
+const uploadDir = "uploads/leads";
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    cb(
+      null,
+      `lead-${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(
+        file.originalname,
+      )}`,
+    );
+  },
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowedMimeTypes = [
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ];
+
+  if (allowedMimeTypes.includes(file.mimetype)) {
+    return cb(null, true);
+  }
+
+  cb(
+    new Error(
+      "Only jpg, jpeg, png, pdf, doc, docx, xls, xlsx files are allowed!",
+    ),
+  );
+};
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 15 * 1024 * 1024 },
+}).array("leadDocuments", 10);
+
+// --- MIDDLEWARE WRAPPER ---
+exports.leadUploadMiddleware = (req, res, next) => {
+  upload(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({
+        message:
+          err.code === "LIMIT_FILE_SIZE"
+            ? "File too large (Max 15MB)"
+            : err.message,
+      });
+    } else if (err) {
+      return res.status(400).json({ message: err.message });
+    }
+    next();
+  });
+};
 
 exports.createLead = async (req, res) => {
   try {
@@ -32,7 +97,6 @@ exports.createLead = async (req, res) => {
       sixdigit,
     } = req.body;
 
-    // CHECK EXTERNAL LINK VALIDATION
     if (isExternal) {
       const validation = await Link.findOne({ key: sixdigit });
 
@@ -51,7 +115,6 @@ exports.createLead = async (req, res) => {
       }
     }
 
-    // CHECK DUPLICATE CONTACT NUMBER
     const existingLead = await Lead.findOne({ leadContactNo });
 
     if (existingLead) {
@@ -61,7 +124,6 @@ exports.createLead = async (req, res) => {
       });
     }
 
-    // HANDLE FILES
     let leadDocuments = [];
 
     if (req.files && req.files.length > 0) {
@@ -72,7 +134,6 @@ exports.createLead = async (req, res) => {
       }));
     }
 
-    // GENERATE LEAD CODE
     const lastLead = await Lead.findOne({}, {}, { sort: { createdAt: -1 } });
     let nextLeadNumber = 1;
 
@@ -86,12 +147,10 @@ exports.createLead = async (req, res) => {
     let finalLeadSourceId = null;
     let finalLeadSourceName = "";
 
-    // If reference exists, do not save Online
     if (ReferenceId) {
       finalLeadSourceId = null;
       finalLeadSourceName = "Reference";
     } else if (isExternal) {
-      // Force Online only when external and no reference
       finalLeadSourceId = "690d7691af1192eb5b523d63";
       finalLeadSourceName = "Online";
     } else {
@@ -126,7 +185,6 @@ exports.createLead = async (req, res) => {
     const newLead = new Lead(LeadData);
     const savedLead = await newLead.save();
 
-    // EXPIRE LINK AFTER SUCCESSFUL EXTERNAL CREATION
     if (isExternal) {
       const validation = await Link.findOne({ key: sixdigit });
       if (validation && !validation.isExpired) {
@@ -150,6 +208,111 @@ exports.createLead = async (req, res) => {
       success: false,
       message: error.message,
     });
+  }
+};
+
+exports.updateLead = async (req, res) => {
+  try {
+    const {
+      leadId,
+      leadName,
+      leadCode,
+      leadAge,
+      leadGenderId,
+      physioCategoryId,
+      leadContactNo,
+      leadSourceId,
+      leadMedicalHistory,
+      leadAddress,
+      isQualified,
+      ReferenceId,
+      sourceName,
+      leadSourceName,
+      LeadStatusId,
+      leadStatusName,
+      cbDate,
+      removedDocuments,
+    } = req.body;
+
+    const lead = await Lead.findById(leadId);
+    if (!lead) {
+      return res.status(404).json({ message: "Lead not found" });
+    }
+
+    let existingDocuments = lead.leadDocuments || [];
+
+    if (removedDocuments) {
+      let removedDocsArray = [];
+
+      try {
+        removedDocsArray =
+          typeof removedDocuments === "string"
+            ? JSON.parse(removedDocuments)
+            : removedDocuments;
+      } catch (e) {
+        removedDocsArray = [];
+      }
+
+      existingDocuments = existingDocuments.filter((doc) => {
+        const shouldRemove = removedDocsArray.includes(doc.fileUrl);
+
+        if (shouldRemove) {
+          const fullPath = path.join(__dirname, "../../", doc.fileUrl);
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+          }
+        }
+
+        return !shouldRemove;
+      });
+    }
+
+    if (req.files && req.files.length > 0) {
+      const newDocuments = req.files.map((file) => ({
+        fileName: file.originalname,
+        fileUrl: `/${file.path.replace(/\\/g, "/")}`,
+        fileType: file.mimetype,
+      }));
+
+      existingDocuments.push(...newDocuments);
+    }
+
+    let LeadData = {
+      leadName,
+      leadCode,
+      leadAge,
+      leadGenderId,
+      physioCategoryId,
+      leadContactNo,
+      leadMedicalHistory,
+      leadAddress,
+      isQualified: isQualified || false,
+      leadDocuments: existingDocuments,
+      leadSourceName,
+      sourceName,
+      LeadStatusId,
+      leadStatusName,
+      cbDate,
+    };
+
+    if (leadSourceName === "Reference") {
+      LeadData.leadSourceId = null;
+      LeadData.ReferenceId = ReferenceId || null;
+    } else {
+      LeadData.leadSourceId = leadSourceId || null;
+      LeadData.ReferenceId = null;
+      LeadData.sourceName = "";
+    }
+
+    const updatedLead = await Lead.findByIdAndUpdate(
+      leadId,
+      { $set: LeadData },
+      { new: true, runValidators: true },
+    );
+
+    return res.status(200).json(updatedLead);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
   }
 };
 
@@ -196,84 +359,6 @@ exports.getLeadById = async (req, res) => {
   }
 };
 
-exports.updateLead = async (req, res) => {
-  try {
-    const {
-      leadId,
-      leadName,
-      leadCode,
-      leadAge,
-      leadGenderId,
-      physioCategoryId,
-      leadContactNo,
-      leadSourceId,
-      leadMedicalHistory,
-      leadAddress,
-      isQualified,
-      leadDocuments,
-      ReferenceId,
-      sourceName,
-      leadSourceName,
-      LeadStatusId,
-      leadStatusName,
-      cbDate,
-    } = req.body;
-
-    let LeadData = {
-      leadName,
-      leadCode,
-      leadAge,
-      leadGenderId,
-      physioCategoryId,
-      leadContactNo,
-      leadMedicalHistory,
-      leadAddress,
-      isQualified: isQualified || false,
-      leadDocuments,
-      leadSourceName,
-      sourceName,
-      LeadStatusId,
-      leadStatusName,
-      cbDate,
-    };
-
-    // ✅ If lead source is Reference, keep leadSourceId null
-    if (leadSourceName === "Reference") {
-      LeadData.leadSourceId = null;
-      LeadData.ReferenceId = ReferenceId || null;
-    } else {
-      LeadData.leadSourceId = leadSourceId || null;
-      LeadData.ReferenceId = null;
-      LeadData.sourceName = "";
-    }
-
-    const lead = await Lead.findByIdAndUpdate(
-      leadId,
-      { $set: LeadData },
-      { new: true, runValidators: true },
-    );
-
-    if (!lead) {
-      return res.status(404).json({ message: "Lead not able to update" });
-    }
-
-    if (req.files && req.files.length > 0) {
-      const newDocuments = req.files.map((file) => ({
-        fileName: file.originalname,
-        fileUrl: `/uploads/leads/${file.filename}`,
-        fileType: file.mimetype,
-      }));
-
-      lead.leadDocuments.push(...newDocuments);
-      await lead.save();
-    }
-
-    return res.status(200).json(lead);
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-};
-
 exports.QualifyLead = async (req, res) => {
   try {
     const {
@@ -305,22 +390,28 @@ exports.QualifyLead = async (req, res) => {
     }
 
     const patientCode = `CON${String(nextPatientNumber).padStart(6, "0")}`;
+    const fullLead = await Lead.findById(_id);
+
+    if (!fullLead) {
+      return res.status(404).json({ message: "Lead not found" });
+    }
 
     const consult = new Consultation({
-      patientName: leadName,
+      patientName: fullLead.leadName,
       patientCode: patientCode,
       isActive: true,
       consultationDate: ConsultationDate,
-      patientAge: leadAge,
-      otherMedCon: leadMedicalHistory,
-      patientGenderId: leadGenderId._id,
-      patientNumber: leadContactNo,
-      patientAddress: leadAddress,
-      leadId: _id,
+      patientAge: fullLead.leadAge,
+      otherMedCon: fullLead.leadMedicalHistory,
+      patientGenderId: fullLead.leadGenderId,
+      patientNumber: fullLead.leadContactNo,
+      patientAddress: fullLead.leadAddress,
+      leadId: fullLead._id,
+      consultationDocuments: fullLead.leadDocuments || [],
     });
 
-    if (ReferenceId) {
-      consult.ReferenceId = new mongoose.Types.ObjectId(ReferenceId._id);
+    if (fullLead.ReferenceId) {
+      consult.ReferenceId = new mongoose.Types.ObjectId(fullLead.ReferenceId);
     }
 
     await consult.save();
