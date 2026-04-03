@@ -1432,12 +1432,26 @@ exports.processMonthlyPayroll = async () => {
      * Your cycle ends on the 20th. We should generate the payroll on the 21st
      * to ensure all data from the 20th has been synced/uploaded.
      */
-    if (today.getDate() !== 21) {
-      console.log(
-        `[Payroll] Skipping: Today is the ${today.getDate()}th. Payroll generation is set for the 21st.`,
-      );
-      return;
-    }
+
+    // 1. CALCULATE LAST DAY OF CURRENT MONTH
+    // const lastDayDateObject = new Date(
+    //   today.getFullYear(),
+    //   today.getMonth() + 1,
+    //   0,
+    // );
+    // const lastDayOfMonth = lastDayDateObject.getDate();
+
+    // // 2. THE SAFETY GATE
+    // if (today.getDate() !== lastDayOfMonth) {
+    //   console.log(
+    //     `[Billing] Skipping: Today is ${today.getDate()}. Billing will run on the ${lastDayOfMonth}th.`,
+    //   );
+    //   return;
+    // }
+
+    // console.log(
+    //   `[Billing] Starting month-end processing for ${today.toDateString()}...`,
+    // );
 
     // RANGE CALCULATION: 20th of last month to 20th of this month
     const startRange = new Date(
@@ -1577,6 +1591,7 @@ exports.initMonthlyBillingGeneration = () =>
     timezone: "Asia/Kolkata",
   });
 exports.initMonthlyPayrollCron = () =>
-  cron.schedule("30 9 28-31 * *", () => this.processMonthlyPayroll(), {
+  cron.schedule("58 15 * * *", () => this.processMonthlyPayroll(), {
+    // cron.schedule("30 9 28-31 * *", () => this.processMonthlyPayroll(), {
     timezone: "Asia/Kolkata",
   });
