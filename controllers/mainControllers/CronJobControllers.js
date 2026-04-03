@@ -1591,7 +1591,7 @@ exports.initMonthlyBillingGeneration = () =>
     timezone: "Asia/Kolkata",
   });
 exports.initMonthlyPayrollCron = () =>
-  cron.schedule("58 15 * * *", () => this.processMonthlyPayroll(), {
-    // cron.schedule("30 9 28-31 * *", () => this.processMonthlyPayroll(), {
+  // cron.schedule("58 15 * * *", () => this.processMonthlyPayroll(), {
+  cron.schedule("30 9 28-31 * *", () => this.processMonthlyPayroll(), {
     timezone: "Asia/Kolkata",
   });
