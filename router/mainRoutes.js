@@ -204,10 +204,18 @@ router.post(
 router.post("/LeaveControllers/markLeave", LeaveControllers.markLeave);
 router.post("/LeaveControllers/getAllLeave", LeaveControllers.getAllLeave);
 //Patients
-router.post("/Patient/createPatient", PatientControllers.createPatients);
+router.post(
+  "/Patient/createPatient",
+  PatientControllers.patientUploadMiddleware,
+  PatientControllers.createPatients,
+);
 router.post("/Patient/getAllPatient", PatientControllers.getAllPatients);
 router.post("/Patient/getSinglePatient", PatientControllers.getByPatientsName);
-router.post("/Patient/updatePatient", PatientControllers.updatePatients);
+router.post(
+  "/Patient/updatePatient",
+  PatientControllers.patientUploadMiddleware,
+  PatientControllers.updatePatients,
+);
 router.post("/Patient/deletePatient", PatientControllers.deletePatients);
 router.post("/Patient/downloadPatient", PatientControllers.downloadPatient);
 router.post(

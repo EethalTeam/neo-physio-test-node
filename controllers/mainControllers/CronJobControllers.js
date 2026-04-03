@@ -724,7 +724,7 @@ exports.processSessionPendingCheck = async (io) => {
 //         const netBilledAmount = totalBill - deduct;
 
 //         // const invoiceNo = await getNextInvoiceNo();
-//         const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
+//         const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
 
 //         const newBill = await Bill.create({
 //           patientId,
@@ -1018,7 +1018,7 @@ exports.processSessionPendingCheck = async (io) => {
 //           { $inc: { seq: 1 } },
 //           { new: true, upsert: true }
 //         );
-//         const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
+//         const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
 
 //         const newBill = await Bill.create({
 //           patientId,
@@ -1091,7 +1091,7 @@ exports.processSessionPendingCheck = async (io) => {
 //           { $inc: { seq: 1 } },
 //           { new: true, upsert: true }
 //         );
-//         const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
+//         const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
 
 //         const newBill = await Bill.create({
 //           patientId,
@@ -1277,7 +1277,7 @@ exports.processMonthlyBilling = async () => {
           { $inc: { seq: 1 } },
           { new: true, upsert: true },
         );
-        const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
+        const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
 
         const newBill = await Bill.create({
           patientId,

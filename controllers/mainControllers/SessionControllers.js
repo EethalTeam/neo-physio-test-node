@@ -13,6 +13,7 @@ const Notification = require("../../model/masterModels/Notification");
 const Bill = require("../../model/masterModels/Bill");
 const Debit = require("../../model/masterModels/DebitPayment");
 const Payroll = require("../../model/masterModels/Payroll");
+const Physio = require("../../model/masterModels/Physio");
 
 // Create a new Session
 exports.createSession = async (req, res) => {
@@ -236,7 +237,7 @@ exports.getMonthlySummary = async (req, res) => {
       });
     }
 
-    const selectedMonth = Number(month); // 1 to 12
+    const selectedMonth = Number(month);
     const selectedYear = Number(year);
 
     if (
@@ -253,26 +254,75 @@ exports.getMonthlySummary = async (req, res) => {
 
     const physioObjectId = new mongoose.Types.ObjectId(physioId);
 
-    // Selected month sessions
+    const physioData = await Physio.findById(physioObjectId).populate(
+      "roleId",
+      "RoleName",
+    );
+
+    if (!physioData) {
+      return res.status(404).json({
+        success: false,
+        message: "Physio not found",
+      });
+    }
+
+    const roleName = physioData?.roleId?.RoleName || "";
+    const isHOD = roleName === "HOD";
+
     const startDate = new Date(selectedYear, selectedMonth - 1, 1);
     const endDate = new Date(selectedYear, selectedMonth, 1);
 
-    const sessions = await Session.find({
-      physioId: physioObjectId,
-      sessionDate: { $gte: startDate, $lt: endDate },
-    }).populate("sessionStatusId", "sessionStatusName");
+    let totalSessions = 0;
+    let completedSessions = 0;
+    let cancelledSessions = 0;
+    let upcomingSessions = 0;
 
-    const completedSessions = sessions.filter(
-      (s) => s.sessionStatusId?.sessionStatusName === "Completed",
-    ).length;
+    let totalReviews = 0;
+    let completedReviews = 0;
+    let pendingReviews = 0;
 
-    const cancelledSessions = sessions.filter(
-      (s) => s.sessionStatusId?.sessionStatusName === "Canceled",
-    ).length;
+    if (isHOD) {
+      const reviews = await Review.find({
+        reviewDate: { $gte: startDate, $lt: endDate },
+      }).populate("reviewStatusId", "reviewStatusName");
 
-    const upcomingSessions = sessions.filter((s) =>
-      ["Scheduled", "Attended"].includes(s.sessionStatusId?.sessionStatusName),
-    ).length;
+      totalReviews = reviews.length;
+
+      completedReviews = reviews.filter(
+        (r) => r.reviewStatusId?.reviewStatusName === "Completed",
+      ).length;
+
+      pendingReviews = reviews.filter((r) =>
+        ["Pending", "Scheduled"].includes(r.reviewStatusId?.reviewStatusName),
+      ).length;
+
+      // keep same response keys for frontend compatibility
+      totalSessions = totalReviews;
+      completedSessions = completedReviews;
+      upcomingSessions = pendingReviews;
+      cancelledSessions = 0;
+    } else {
+      const sessions = await Session.find({
+        physioId: physioObjectId,
+        sessionDate: { $gte: startDate, $lt: endDate },
+      }).populate("sessionStatusId", "sessionStatusName");
+
+      totalSessions = sessions.length;
+
+      completedSessions = sessions.filter(
+        (s) => s.sessionStatusId?.sessionStatusName === "Completed",
+      ).length;
+
+      cancelledSessions = sessions.filter(
+        (s) => s.sessionStatusId?.sessionStatusName === "Canceled",
+      ).length;
+
+      upcomingSessions = sessions.filter((s) =>
+        ["Scheduled", "Attended"].includes(
+          s.sessionStatusId?.sessionStatusName,
+        ),
+      ).length;
+    }
 
     const monthNames = [
       "January",
@@ -291,7 +341,7 @@ exports.getMonthlySummary = async (req, res) => {
 
     const selectedMonthName = monthNames[selectedMonth - 1];
 
-    // last month payroll
+    // previous month payroll
     let payrollMonth = selectedMonth - 1;
     let payrollYear = selectedYear;
 
@@ -302,7 +352,6 @@ exports.getMonthlySummary = async (req, res) => {
 
     const payrollMonthName = monthNames[payrollMonth - 1];
 
-    // salary visible only after 10th of selected month
     const today = new Date();
     const salaryVisibleDate = new Date(selectedYear, selectedMonth - 1, 10);
 
@@ -324,8 +373,8 @@ exports.getMonthlySummary = async (req, res) => {
       (selectedYear === today.getFullYear() &&
         selectedMonth > today.getMonth() + 1);
 
-    // Rules:
-    // past month -> salary visible
+    // salary rules
+    // past month -> visible
     // current month -> visible only after 10th
     // future month -> not visible
     if (isPastMonth || (isCurrentMonth && today >= salaryVisibleDate)) {
@@ -350,19 +399,33 @@ exports.getMonthlySummary = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      totalSessions: sessions.length,
+
+      // common keys for frontend
+      totalSessions,
       completedSessions,
       cancelledSessions,
       upcomingSessions,
+
+      // extra keys for HOD clarity
+      totalReviews: isHOD ? totalReviews : 0,
+      completedReviews: isHOD ? completedReviews : 0,
+      pendingReviews: isHOD ? pendingReviews : 0,
+
       monthlySalary,
+      payroll: payrollDoc || null,
       salaryVisible,
       salaryVisibleAfter: salaryVisibleDate,
+
       payrollMonth,
       payrollMonthName,
       payrollYear,
+
       selectedMonth,
       selectedMonthName,
       selectedYear,
+
+      isHOD,
+      roleName,
     });
   } catch (error) {
     console.error("getMonthlySummary error:", error);
@@ -1376,7 +1439,7 @@ exports.SessionEnd = async (req, res) => {
           debitDoc.DebitDate = new Date();
           await debitDoc.save({ session: mongooseSession });
         }
-        const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
+        const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
         console.log(invoiceNo, "invoiceNo");
         // --- Generate Bill ---
         await Bill.create(

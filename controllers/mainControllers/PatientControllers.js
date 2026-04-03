@@ -6,7 +6,80 @@ const SessionModel = require("../../model/masterModels/Session");
 const Bill = require("../../model/masterModels/Bill");
 const Debit = require("../../model/masterModels/DebitPayment");
 const TreatmentCycle = require("../../model/masterModels/TreatmentCycle");
+const fs = require("fs");
+const path = require("path");
+const multer = require("multer");
+const toBoolean = (val, defaultVal = false) => {
+  if (val === true || val === "true") return true;
+  if (val === false || val === "false") return false;
+  if (val === "" || val === undefined || val === null) return defaultVal;
+  return Boolean(val);
+};
 
+const toNullableObjectId = (value) => {
+  return value && value !== "" ? value : null;
+};
+const uploadDir = "uploads/patients";
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    cb(
+      null,
+      `patient-${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(
+        file.originalname,
+      )}`,
+    );
+  },
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowedMimeTypes = [
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ];
+
+  if (allowedMimeTypes.includes(file.mimetype)) {
+    return cb(null, true);
+  }
+
+  cb(
+    new Error(
+      "Only jpg, jpeg, png, pdf, doc, docx, xls, xlsx files are allowed!",
+    ),
+  );
+};
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 50 * 1024 * 1024 },
+}).array("patientDocuments", 10);
+
+exports.patientUploadMiddleware = (req, res, next) => {
+  upload(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({
+        message:
+          err.code === "LIMIT_FILE_SIZE"
+            ? "File too large (Max 50MB)"
+            : err.message,
+      });
+    } else if (err) {
+      return res.status(400).json({ message: err.message });
+    }
+    next();
+  });
+};
 exports.fixPatientActiveCycle = async (req, res) => {
   try {
     const patients = await Patient.find({});
@@ -235,7 +308,15 @@ exports.createPatients = async (req, res) => {
     }
 
     const newHnpCode = `HNP${String(nextId).padStart(6, "0")}`;
+    let patientDocuments = [];
 
+    if (req.files && req.files.length > 0) {
+      patientDocuments = req.files.map((file) => ({
+        fileName: file.originalname,
+        fileUrl: `/uploads/patients/${file.filename}`,
+        fileType: file.mimetype,
+      }));
+    }
     const createData = {
       patientName,
       patientCode: newHnpCode,
@@ -295,6 +376,7 @@ exports.createPatients = async (req, res) => {
       kmsFromPrevious,
       reviewFrequency,
       feeAmount,
+      patientDocuments,
     };
 
     if (ReferenceId) createData.ReferenceId = ReferenceId;
@@ -981,7 +1063,7 @@ exports.updatePatients = async (req, res) => {
       muscleStrength,
       postureOrGaitAnalysis,
       functionalLimitations,
-      static,
+      static: staticValue,
       dynamic,
       coordination,
       ADLAbility,
@@ -1016,20 +1098,34 @@ exports.updatePatients = async (req, res) => {
       stopReason,
       recoveredType,
       isConsentReceived,
+      removedDocuments,
     } = req.body;
-const counter = await Counter.findOneAndUpdate(
+
+    const counter = await Counter.findOneAndUpdate(
       { _id: "invoiceNo" },
       { $inc: { seq: 1 } },
       { new: true, upsert: true },
     );
+
     if (!_id) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: "Patient id is required" });
     }
 
-    // Validation for recovered logic
-    if (isRecovered === true) {
+    const finalIsRecovered = toBoolean(isRecovered, false);
+    const finalIsActive = toBoolean(isActive, true);
+    const finalHistoryOfFall = toBoolean(historyOfFall, false);
+    const finalHistoryOfSurgery = toBoolean(historyOfSurgery, false);
+    const finalSmokingOrAlcohol = toBoolean(smokingOrAlcohol, false);
+    const finalModalities = toBoolean(modalities, false);
+    const finalIsConsentReceived = toBoolean(isConsentReceived, false);
+
+    const finalReferenceId = toNullableObjectId(ReferenceId);
+    const finalFeesTypeId = toNullableObjectId(FeesTypeId);
+    const finalPhysioId = toNullableObjectId(physioId);
+
+    if (finalIsRecovered === true) {
       if (!recoveredType) {
         await session.abortTransaction();
         session.endSession();
@@ -1059,16 +1155,54 @@ const counter = await Counter.findOneAndUpdate(
 
     const wasRecoveredBefore = !!existingPatient.isRecovered;
 
+    let existingDocuments = existingPatient.patientDocuments || [];
+
+    if (removedDocuments) {
+      let removedDocsArray = [];
+
+      try {
+        removedDocsArray =
+          typeof removedDocuments === "string"
+            ? JSON.parse(removedDocuments)
+            : removedDocuments;
+      } catch (e) {
+        removedDocsArray = [];
+      }
+
+      existingDocuments = existingDocuments.filter((doc) => {
+        const shouldRemove = removedDocsArray.includes(doc.fileUrl);
+
+        if (shouldRemove) {
+          const fullPath = path.join(__dirname, "../../", doc.fileUrl);
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+          }
+        }
+
+        return !shouldRemove;
+      });
+    }
+
+    if (req.files && req.files.length > 0) {
+      const newDocuments = req.files.map((file) => ({
+        fileName: file.originalname,
+        fileUrl: `/uploads/patients/${file.filename}`,
+        fileType: file.mimetype,
+      }));
+
+      existingDocuments.push(...newDocuments);
+    }
+
     const updatedPatient = await Patient.findByIdAndUpdate(
       _id,
       {
         $set: {
           patientName,
           patientCode,
-          isActive,
+          isActive: finalIsActive,
           consultationDate,
-          historyOfFall,
-          historyOfSurgery,
+          historyOfFall: finalHistoryOfFall,
+          historyOfSurgery: finalHistoryOfSurgery,
           historyOfSurgeryDetails,
           historyOfFallDetails,
           patientAge,
@@ -1080,13 +1214,13 @@ const counter = await Counter.findOneAndUpdate(
           patientAddress,
           patientPinCode,
           patientCondition,
-          physioId,
+          physioId: finalPhysioId,
           reviewDate,
           MedicalHistoryAndRiskFactor,
           otherMedCon,
           currMed,
           typesOfLifeStyle,
-          smokingOrAlcohol,
+          smokingOrAlcohol: finalSmokingOrAlcohol,
           dietaryHabits,
           Contraindications,
           painLevel,
@@ -1094,7 +1228,7 @@ const counter = await Counter.findOneAndUpdate(
           muscleStrength,
           postureOrGaitAnalysis,
           functionalLimitations,
-          static,
+          static: staticValue,
           dynamic,
           coordination,
           ADLAbility,
@@ -1105,7 +1239,7 @@ const counter = await Counter.findOneAndUpdate(
           Frequency,
           Duration,
           noOfDays,
-          modalities,
+          Modalities: finalModalities,
           targetedArea,
           hodNotes,
           Physiotherapist,
@@ -1121,15 +1255,16 @@ const counter = await Counter.findOneAndUpdate(
           Satisfaction,
           kmsFromPrevious,
           reviewFrequency,
-          FeesTypeId,
+          FeesTypeId: finalFeesTypeId,
           feeAmount,
-          ReferenceId,
-          isRecovered,
-          recoveredAt: isRecovered ? recoveredAt || new Date() : null,
+          ReferenceId: finalReferenceId,
+          patientDocuments: existingDocuments,
+          isRecovered: finalIsRecovered,
+          recoveredAt: finalIsRecovered ? recoveredAt || new Date() : null,
           stopReason:
-            isRecovered && recoveredType === "Other" ? stopReason : null,
-          recoveredType: isRecovered ? recoveredType : null,
-          isConsentReceived,
+            finalIsRecovered && recoveredType === "Other" ? stopReason : null,
+          recoveredType: finalIsRecovered ? recoveredType : null,
+          isConsentReceived: finalIsConsentReceived,
         },
       },
       { new: true, runValidators: true, session },
@@ -1143,8 +1278,7 @@ const counter = await Counter.findOneAndUpdate(
 
     let generatedBill = null;
 
-    // ✅ Generate bill only when patient is newly marked as recovered
-    if (isRecovered === true && wasRecoveredBefore === false) {
+    if (finalIsRecovered === true && wasRecoveredBefore === false) {
       const COMPLETED_STATUS_ID = new mongoose.Types.ObjectId(
         "691ec69eae0e10763c8f21e0",
       );
@@ -1210,7 +1344,7 @@ const counter = await Counter.findOneAndUpdate(
 
         const deduct = Math.min(Math.max(advPaid - usedAdv, 0), totalBill);
         const netBilledAmount = totalBill - deduct;
-const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
+        const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
         const billDate = new Date(lastDate);
 
         generatedBill = await Bill.create(
@@ -1262,7 +1396,7 @@ const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
 
     return res.status(200).json({
       message:
-        isRecovered === true && wasRecoveredBefore === false
+        finalIsRecovered === true && wasRecoveredBefore === false
           ? generatedBill
             ? "Patients updated successfully and bill generated"
             : "Patients updated successfully. No unbilled completed sessions found for billing"

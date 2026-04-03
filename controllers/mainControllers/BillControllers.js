@@ -132,7 +132,7 @@ exports.createBill = async (req, res) => {
     const safeTotalBill = Number((totalBill || 0).toFixed(2));
     const safeDeduct = Number((deduct || 0).toFixed(2));
     const safeNet = Number((net || 0).toFixed(2));
-    const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
+    const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
 
     const newBill = await Bill.create({
       patientId,
@@ -308,7 +308,7 @@ exports.generateBillForRecoveredPatient = async (patientId) => {
     const netBilledAmount = totalBill - deduct;
 
     const billDate = new Date(lastDate);
-    const invoiceNo = `INV-${String(counter.seq).padStart(6, "0")}`;
+    const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
 
     const newBill = await Bill.create({
       patientId: patient._id,

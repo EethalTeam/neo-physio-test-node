@@ -309,6 +309,25 @@ const patientSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Reference",
     },
+    patientDocuments: [
+      {
+        fileName: {
+          type: String,
+          required: true,
+        },
+        fileUrl: {
+          type: String,
+          required: true,
+        },
+        fileType: {
+          type: String,
+        },
+        uploadedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
     activeCycleId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "TreatmentCycle",
