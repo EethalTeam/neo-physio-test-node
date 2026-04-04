@@ -268,12 +268,21 @@ exports.getAllReview = async (req, res) => {
     const daysToSubtract = isMonday ? 2 : 1; // If Monday, go back to Saturday. Else, go back 1 day.
 
     const yesterdayStartIST = new Date(todayStartIST);
-    yesterdayStartIST.setUTCDate(yesterdayStartIST.getUTCDate() - daysToSubtract);
+    yesterdayStartIST.setUTCDate(
+      yesterdayStartIST.getUTCDate() - daysToSubtract,
+    );
     yesterdayStartIST.setUTCHours(0, 0, 0, 0);
 
     const yesterdayEndIST = new Date(todayStartIST);
     yesterdayEndIST.setUTCDate(yesterdayEndIST.getUTCDate() - daysToSubtract);
     yesterdayEndIST.setUTCHours(23, 59, 59, 999);
+    const TomorrowIST = new Date(todayStartIST);
+    TomorrowIST.setUTCDate(TomorrowIST.getUTCDate() + 1);
+    TomorrowIST.setUTCHours(0, 0, 0, 0);
+
+    const TomorrowEndIST = new Date(todayStartIST);
+    TomorrowEndIST.setUTCDate(TomorrowEndIST.getUTCDate() + 1);
+    TomorrowEndIST.setUTCHours(23, 59, 59, 999);
     // --------------------------------
 
     // LAST 3 DAYS (excluding today)
@@ -292,10 +301,18 @@ exports.getAllReview = async (req, res) => {
     const yesterdayEndUTC = new Date(yesterdayEndIST.getTime() - istOffset);
 
     const last3DaysStartUTC = new Date(last3DaysStartIST.getTime() - istOffset);
-    const last3DaysEndUTC = new Date(yesterdayEndFor3Days.getTime() - istOffset);
+    const last3DaysEndUTC = new Date(
+      yesterdayEndFor3Days.getTime() - istOffset,
+    );
+
+    const tomorrowStartUTC = new Date(TomorrowIST.getTime() - istOffset);
+    const tomorrowEndUTC = new Date(TomorrowEndIST.getTime() - istOffset);
 
     const populateFields = [
-      { path: "patientId", select: "patientName shortTermGoals longTermGoals isRecovered" },
+      {
+        path: "patientId",
+        select: "patientName shortTermGoals longTermGoals isRecovered",
+      },
       { path: "physioId", select: "physioName" },
       { path: "reviewTypeId", select: "reviewTypeName" },
       { path: "reviewStatusId", select: "reviewStatusName" },
@@ -305,27 +322,42 @@ exports.getAllReview = async (req, res) => {
     // 1. TODAY
     const todayReviews = await Review.find({
       reviewDate: { $gte: todayStartUTC, $lte: todayEndUTC },
-    }).populate(populateFields).sort({ reviewDate: -1 });
+    })
+      .populate(populateFields)
+      .sort({ reviewDate: -1 });
 
     // 2. YESTERDAY (Or Saturday if today is Monday)
     const yesterdayReviews = await Review.find({
       reviewDate: { $gte: yesterdayStartUTC, $lte: yesterdayEndUTC },
-    }).populate(populateFields).sort({ reviewDate: -1 });
+    })
+      .populate(populateFields)
+      .sort({ reviewDate: -1 });
 
     const yesterdayGeneralReviews = yesterdayReviews.filter((review) => {
-      const type = review.reviewTypeId?.reviewTypeName?.toLowerCase()?.trim() || "";
+      const type =
+        review.reviewTypeId?.reviewTypeName?.toLowerCase()?.trim() || "";
       return type === "general";
     });
 
     // 3. LAST 3 DAYS PENDING REDFLAG
     const last3DaysReviews = await Review.find({
       reviewDate: { $gte: last3DaysStartUTC, $lte: last3DaysEndUTC },
-    }).populate(populateFields).sort({ reviewDate: -1 });
-
+    })
+      .populate(populateFields)
+      .sort({ reviewDate: -1 });
+    const tomorrowReviews = await Review.find({
+      reviewDate: { $gte: tomorrowStartUTC, $lte: tomorrowEndUTC },
+    })
+      .populate(populateFields)
+      .sort({ reviewDate: -1 });
     const pendingRedFlagReviews = last3DaysReviews.filter((review) => {
-      const status = review.reviewStatusId?.reviewStatusName?.toLowerCase()?.trim() || "";
-      const type = review.reviewTypeId?.reviewTypeName?.toLowerCase()?.trim() || "";
-      return status === "pending" && (type === "redflag" || type === "redflags");
+      const status =
+        review.reviewStatusId?.reviewStatusName?.toLowerCase()?.trim() || "";
+      const type =
+        review.reviewTypeId?.reviewTypeName?.toLowerCase()?.trim() || "";
+      return (
+        status === "pending" && (type === "redflag" || type === "redflags")
+      );
     });
 
     return res.status(200).json({
@@ -334,6 +366,7 @@ exports.getAllReview = async (req, res) => {
       todayReviews,
       yesterdayGeneralReviews,
       pendingRedFlagReviews,
+      tomorrowReviews,
     });
   } catch (error) {
     console.error("Error fetching reviews:", error);

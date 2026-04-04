@@ -159,14 +159,18 @@ router.post(
   "/Bill/resetIsBilled",
   BillCountrollers.deleteAllBillsAndResetSessions,
 );
+router.post("/Bill/revertPayment", BillCountrollers.revertPayment);
+
 router.post(
-  "/revertBillingStatusGlobal",
+  "/Bill/revertBillingStatusGlobal",
   BillCountrollers.revertBillingStatusGlobal,
 );
 router.post(
-  "/syncCorrectMarchBillsFixed",
+  "/Bill/syncCorrectMarchBillsFixed",
   BillCountrollers.syncCorrectMarchBillsFixed,
 );
+
+router.post("/Bill/getPaymentHistory", BillCountrollers.getPaymentHistory);
 router.post("/getSessionBillingAudit", BillCountrollers.getSessionBillingAudit);
 
 router.post("/Leave/resetLeaveModule", LeaveControllers.resetLeaveModule);
@@ -237,12 +241,12 @@ router.post(
   PatientControllers.updatePatientGoals,
 );
 router.post(
-  "/Patient/fixAndCreateCycles",
-  PatientControllers.fixOldSessionsAndCycle,
+  "/Patient/markPatientRecovered",
+  PatientControllers.markPatientRecovered,
 );
 router.post(
-  "/Patient/debugPatientCycles",
-  PatientControllers.debugPatientCycles,
+  "/Patient/deleteTodayBill",
+  PatientControllers.revertSingleSessionToScheduled,
 );
 router.post(
   "/Patient/updatePatientFeedbacks",

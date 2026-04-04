@@ -109,65 +109,38 @@ exports.getSingleExpense = async (req, res) => {
 // Update Expense
 exports.updateExpense = async (req, res) => {
   try {
-    const {
-      _id,
-      ExpenseTypeID,
-      ExpenseCategoryId,
-      expenseDate,
-      expenseAmount,
-      PhysioId,
-      physioDescription,
-      officeExpDes,
-      ReferenceId,
-      PatientId,
-      referenceDes,
-      MachineiId,
-      machineDes,
-      otherDescription,
-    } = req.body;
+    const { _id, ...updateData } = req.body;
 
-    if (!_id || !mongoose.Types.ObjectId.isValid(_id)) {
-      return res.status(400).json({ message: "Valid expense id is required" });
+    if (!_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Expense ID is required",
+      });
     }
 
-    const expense = await Expense.findByIdAndUpdate(
+    const updated = await Expense.findByIdAndUpdate(
       _id,
-      {
-        $set: {
-          ExpenseTypeID,
-          ExpenseCategoryId,
-          expenseDate,
-          expenseAmount,
-          PhysioId: PhysioId || null,
-          physioDescription: physioDescription || "",
-          officeExpDes: officeExpDes || "",
-          ReferenceId: ReferenceId || null,
-          PatientId: PatientId || null,
-          referenceDes: referenceDes || "",
-          MachineiId: MachineiId || null,
-          machineDes: machineDes || "",
-          otherDescription: otherDescription || "",
-        },
-      },
-      { new: true, runValidators: true },
-    )
-      .populate("ExpenseTypeID", "ExpenseTypeName")
-      .populate("ExpenseCategoryId", "ExpenseCategoryName")
-      .populate("PhysioId", "physioName")
-      .populate("ReferenceId", "sourceName")
-      .populate("PatientId", "patientName")
-      .populate("MachineiId", "machineName");
+      { $set: updateData },
+      { new: true },
+    );
 
-    if (!expense) {
-      return res.status(404).json({ message: "Expense not found" });
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        message: "Expense not found",
+      });
     }
 
     return res.status(200).json({
+      success: true,
       message: "Expense updated successfully",
-      data: expense,
+      data: updated,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 

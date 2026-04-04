@@ -6,7 +6,7 @@ const Debit = require("../../model/masterModels/DebitPayment");
 const Patient = require("../../model/masterModels/Patient");
 const Counter = require("../../model/masterModels/Counter");
 const COMPLETED_STATUS_ID = "691ec69eae0e10763c8f21e0";
-
+const PaymentHistory = require("../../model/masterModels/PaymentHistory");
 // helper: normalize fee type from patient
 const getNormalizedFeeType = (patient) => {
   return String(
@@ -23,45 +23,25 @@ const getNormalizedFeeType = (patient) => {
 
 exports.createBill = async (req, res) => {
   try {
-    const { patientId, month, year } = req.body;
+    const { patientId } = req.body;
+
+    if (!patientId) {
+      return res.status(400).json({
+        message: "patientId is required",
+      });
+    }
+
     const counter = await Counter.findOneAndUpdate(
       { _id: "invoiceNo" },
       { $inc: { seq: 1 } },
       { new: true, upsert: true },
     );
-    if (!patientId || !month || !year) {
-      return res.status(400).json({
-        message: "patientId, month and year required",
-      });
-    }
-
-    // const existingBill = await Bill.findOne({
-    //   patientId,
-    //   month: String(month).trim(),
-    //   year: Number(year),
-    // });
-
-    // if (existingBill) {
-    //   return res.status(400).json({
-    //     message: `Bill already exists for ${month} ${year}`,
-    //   });
-    // }
-
-    const monthIndex = new Date(`${month} 1, ${year}`).getMonth();
-
-    if (isNaN(monthIndex)) {
-      return res.status(400).json({ message: "Invalid month" });
-    }
-
-    const startDate = new Date(year, monthIndex, 1);
-    const endDate = new Date(year, monthIndex + 1, 0, 23, 59, 59, 999);
 
     const sessions = await Session.aggregate([
       {
         $match: {
           patientId: new mongoose.Types.ObjectId(patientId),
           sessionStatusId: new mongoose.Types.ObjectId(COMPLETED_STATUS_ID),
-          sessionDate: { $gte: startDate, $lte: endDate },
           isBilled: false,
         },
       },
@@ -79,7 +59,7 @@ exports.createBill = async (req, res) => {
 
     if (!sessions.length) {
       return res.status(400).json({
-        message: "No completed sessions found",
+        message: "No unbilled completed sessions found",
       });
     }
 
@@ -98,16 +78,21 @@ exports.createBill = async (req, res) => {
 
     const isPerMonth = feeTypeName === "permonth";
     const isPerSession = feeTypeName === "persession";
-
     let totalBill = 0;
     let ratePerSession = 0;
-
+    console.log(feeAmount, isPerMonth, "feeAmount");
     if (isPerMonth) {
+      //  FIXED: No multiplication
       totalBill = feeAmount;
       ratePerSession = 0;
-    } else {
+    } else if (isPerSession) {
+      //  Multiply only here
       ratePerSession = feeAmount;
       totalBill = feeAmount * item.count;
+    } else {
+      return res.status(400).json({
+        message: "Invalid fee type",
+      });
     }
 
     const advPaid =
@@ -134,6 +119,8 @@ exports.createBill = async (req, res) => {
     const safeNet = Number((net || 0).toFixed(2));
     const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
 
+    const billDate = new Date(item.lastDate);
+
     const newBill = await Bill.create({
       patientId,
       invoiceNo,
@@ -144,7 +131,7 @@ exports.createBill = async (req, res) => {
           ? "Full Payment"
           : safeDeduct > 0
             ? "Partial Payment"
-            : "Full Payment",
+            : "Pending",
       ReceivedAmount: safeDeduct,
       TotalBilledAmount: safeTotalBill,
       DeductedFromAdvance: safeDeduct,
@@ -154,8 +141,8 @@ exports.createBill = async (req, res) => {
       ratePerSession: Number(ratePerSession.toFixed(2)),
       totalAmount: safeTotalBill,
       TotalSessionCount: item.count,
-      month: String(month).trim(),
-      year: Number(year),
+      month: billDate.toLocaleString("default", { month: "long" }),
+      year: billDate.getFullYear(),
       isComplete: safeNet <= 0,
       feeType: isPerMonth ? "permonth" : "persession",
     });
@@ -171,11 +158,12 @@ exports.createBill = async (req, res) => {
     );
 
     return res.status(200).json({
-      message: "Manual bill generated successfully",
+      message:
+        "Bill generated successfully for all unbilled completed sessions",
       data: newBill,
     });
   } catch (err) {
-    console.error("Manual Billing Error:", err);
+    console.error("Billing Error:", err);
     return res.status(500).json({ message: err.message });
   }
 };
@@ -478,7 +466,17 @@ exports.receivePayment = async (req, res) => {
     }
 
     await bill.save();
-
+    await PaymentHistory.create({
+      billId: bill._id,
+      patientId: bill.patientId,
+      actionType: "PAYMENT_RECEIVED",
+      amount: receivedNow,
+      beforeReceivedAmount: oldReceived,
+      afterReceivedAmount: updatedReceived,
+      beforeDiscountAmount: oldDiscount,
+      afterDiscountAmount: updatedDiscount,
+      notes: notes || "",
+    });
     return res.status(200).json({
       success: true,
       message: "Payment recorded successfully",
@@ -496,7 +494,7 @@ exports.receivePayment = async (req, res) => {
 
 exports.getAllBill = async (req, res) => {
   try {
-    const { month, year, patientId } = req.body;
+    const { month, year, patientId, filterType = "created" } = req.body;
 
     const monthNames = [
       "January",
@@ -528,10 +526,17 @@ exports.getAllBill = async (req, res) => {
         const startDate = new Date(Number(year), monthIndex, 1, 0, 0, 0, 0);
         const endDate = new Date(Number(year), monthIndex + 1, 1, 0, 0, 0, 0);
 
-        filter.createdAt = {
-          $gte: startDate,
-          $lt: endDate,
-        };
+        if (filterType === "lastSession") {
+          filter.ToDate = {
+            $gte: startDate,
+            $lt: endDate,
+          };
+        } else {
+          filter.createdAt = {
+            $gte: startDate,
+            $lt: endDate,
+          };
+        }
       }
     }
 
@@ -838,6 +843,96 @@ exports.getSessionBillingAudit = async (req, res) => {
       success: false,
       message: "Could not retrieve session audit.",
       error: err.message,
+    });
+  }
+};
+
+exports.revertPayment = async (req, res) => {
+  try {
+    const { billId } = req.body;
+
+    if (!billId) {
+      return res.status(400).json({
+        success: false,
+        message: "Bill ID is required",
+      });
+    }
+
+    const bill = await Bill.findById(billId);
+
+    if (!bill) {
+      return res.status(404).json({
+        success: false,
+        message: "Bill not found",
+      });
+    }
+
+    if (bill.isBadDebt) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot revert Bad Debt bill",
+      });
+    }
+
+    const beforeReceived = bill.ReceivedAmount || 0;
+    const beforeDiscount = bill.DiscountAmount || 0;
+
+    bill.ReceivedAmount = 0;
+    bill.DiscountAmount = 0;
+    bill.paymentStatus = "Pending";
+    bill.paymentType = "Pending";
+    bill.isComplete = false;
+
+    await bill.save();
+
+    await PaymentHistory.create({
+      billId: bill._id,
+      patientId: bill.patientId,
+      actionType: "PAYMENT_REVERTED",
+      amount: beforeReceived,
+      beforeReceivedAmount: beforeReceived,
+      afterReceivedAmount: 0,
+      beforeDiscountAmount: beforeDiscount,
+      afterDiscountAmount: 0,
+      notes: "Full revert",
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment reverted successfully",
+      data: bill,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.getPaymentHistory = async (req, res) => {
+  try {
+    const { billId } = req.body;
+
+    if (!billId) {
+      return res.status(400).json({
+        success: false,
+        message: "Bill ID is required",
+      });
+    }
+
+    const history = await PaymentHistory.find({ billId }).sort({
+      createdAt: -1,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: history,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
     });
   }
 };
