@@ -269,8 +269,10 @@ exports.generateBillForRecoveredPatient = async (patientId) => {
     let totalBill = 0;
 
     if (isPerMonth) {
-      totalBill = feeAmount;
-      ratePerSession = 0;
+      ratePerSession = feeAmount / 26; // Distribute monthly fee across sessions for reference
+      totalBill = ratePerSession * totalSessionCount;
+      // totalBill = feeAmount;
+      // ratePerSession = 0;
     } else {
       ratePerSession = feeAmount;
       totalBill = feeAmount * totalSessionCount;

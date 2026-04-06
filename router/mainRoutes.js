@@ -270,7 +270,15 @@ router.post("/Expense/getAllExpense", ExpenseControllers.getAllExpense);
 router.post("/Expense/getSingleExpense", ExpenseControllers.getSingleExpense);
 router.post("/Expense/updateExpense", ExpenseControllers.updateExpense);
 router.post("/Expense/deleteExpense", ExpenseControllers.deleteExpense);
-
+router.post("/Expense/getWeeklyRevenue", ExpenseControllers.getWeeklyRevenue);
+router.post(
+  "/Expense/getMonthlyNetProfit",
+  ExpenseControllers.getMonthlyNetProfit,
+);
+router.post(
+  "/Expense/getFinancialYearSummary",
+  ExpenseControllers.getFinancialYearSummary,
+);
 router.post("/Session/getMonthlySummary", SessionControllers.getMonthlySummary);
 //SessionControllers
 router.post("/Session/createSession", SessionControllers.createSession);
@@ -279,6 +287,7 @@ router.post(
   SessionControllers.getAllSessionsbyPatient,
 );
 router.post("/Session/getAllSession", SessionControllers.getAllSessions);
+router.post("/Session/getSCRStats", SessionControllers.getSCRStats);
 router.post("/Session/getSingleSession", SessionControllers.getSingleSession);
 router.post("/Session/updateSession", SessionControllers.updateSession);
 router.post("/Session/deleteSession", SessionControllers.deleteSession);

@@ -1423,15 +1423,154 @@ exports.processMonthlyBilling = async () => {
 
 // --- INITIALIZERS (Server.js) ---
 
+// exports.processMonthlyPayroll = async () => {
+//   try {
+//     const today = new Date();
+
+//     /**
+//      * SAFETY GATE:
+//      * Your cycle ends on the 20th. We should generate the payroll on the 21st
+//      * to ensure all data from the 20th has been synced/uploaded.
+//      */
+
+//     // 1. CALCULATE LAST DAY OF CURRENT MONTH
+//     const lastDayDateObject = new Date(
+//       today.getFullYear(),
+//       today.getMonth() + 1,
+//       0,
+//     );
+//     const lastDayOfMonth = lastDayDateObject.getDate();
+
+//     // // 2. THE SAFETY GATE
+//     if (today.getDate() !== lastDayOfMonth) {
+//       console.log(
+//         `[Payroll] Skipping: Today is ${today.getDate()}. Payroll will run on the ${lastDayOfMonth}th.`,
+//       );
+//       return;
+//     }
+
+//     console.log(
+//       `[Payroll] Starting month-end processing for ${today.toDateString()}...`,
+//     );
+
+//     // RANGE CALCULATION: 20th of last month to 20th of this month
+//     const startRange = new Date(
+//       today.getFullYear(),
+//       today.getMonth() - 1,
+//       20,
+//       0,
+//       0,
+//       0,
+//       0,
+//     );
+//     const endRange = new Date(
+//       today.getFullYear(),
+//       today.getMonth(),
+//       20,
+//       23,
+//       59,
+//       59,
+//       999,
+//     );
+
+//     const payrollMonth = today.toLocaleString("default", { month: "long" });
+//     const payrollYear = today.getFullYear();
+
+//     console.log(
+//       `[Payroll] Starting generation for ${payrollMonth} ${payrollYear} (Cycle: 20th to 20th)`,
+//     );
+
+//     const physios = await Physio.find({ isActive: true });
+
+//     for (const p of physios) {
+//       // 1. Calculate Approved/Paid Petrol Kms
+//       const petrolAgg = await PetrolAllowance.aggregate([
+//         {
+//           $match: {
+//             physioId: p._id,
+//             date: { $gte: startRange, $lte: endRange },
+//             status: { $in: ["Approved", "Paid"] },
+//           },
+//         },
+//         { $group: { _id: null, total: { $sum: "$finalDailyKms" } } },
+//       ]);
+//       const totalKms = petrolAgg[0]?.total || 0;
+
+//       // 2. Calculate Completed Sessions Count
+//       const sessionAgg = await Session.aggregate([
+//         {
+//           $match: {
+//             physioId: p._id,
+//             sessionDate: { $gte: startRange, $lte: endRange },
+//             sessionStatusId: new mongoose.Types.ObjectId(
+//               "691ec69eae0e10763c8f21e0",
+//             ),
+//           },
+//         },
+//         { $group: { _id: null, count: { $sum: 1 } } },
+//       ]);
+//       const completedSessions = sessionAgg[0]?.count || 0;
+
+//       // 3. Calculate Unpaid Leaves
+//       const leavesCount = await LeaveModel.countDocuments({
+//         physioId: p._id,
+//         LeaveDate: { $gte: startRange, $lte: endRange },
+//         PaidLeave: false,
+//         isActive: true,
+//       });
+
+//       // 4. Salary Calculations
+//       const baseSalary = Number(p.physioSalary || 0);
+//       const vehicleMaintenance = Number(p.physioVehicleMTC || 0);
+//       const incentivePerSession = Number(p.physioIncentive || 0);
+//       const petrolRatePerKm = Number(p.physioPetrolAlw || 0);
+
+//       // Deduction logic: Salary / 30 days * number of leaves
+//       const deductionAmount = Math.round((baseSalary / 30) * leavesCount);
+
+//       const grossSalary =
+//         baseSalary +
+//         vehicleMaintenance +
+//         incentivePerSession * completedSessions +
+//         totalKms * petrolRatePerKm;
+
+//       const netSalary = grossSalary - deductionAmount;
+
+//       // 5. Upsert Payroll Record
+//       await Payroll.findOneAndUpdate(
+//         {
+//           physioId: p._id,
+//           payrRollMonth: payrollMonth,
+//           payrRollYear: payrollYear,
+//         },
+//         {
+//           payRollDate: today,
+//           PetrolKm: totalKms,
+//           TotalSalary: Math.round(grossSalary),
+//           NetSalary: Math.round(netSalary),
+//           NoofLeave: leavesCount,
+//           TotalAmountDeducted: deductionAmount,
+//           payrRollCompletedSessions: completedSessions,
+//           // Added metadata for audit logs
+//           calculationCycle: `${startRange.toDateString()} to ${endRange.toDateString()}`,
+//         },
+//         { upsert: true, new: true },
+//       );
+
+//       console.log(
+//         `[Payroll] Processed: ${p.physioName || p._id} | Net: ${Math.round(netSalary)}`,
+//       );
+//     }
+
+//     console.log(`[Payroll] Monthly processing finished successfully.`);
+//   } catch (err) {
+//     console.error("Critical Payroll Error:", err);
+//   }
+// };
+
 exports.processMonthlyPayroll = async () => {
   try {
     const today = new Date();
-
-    /**
-     * SAFETY GATE:
-     * Your cycle ends on the 20th. We should generate the payroll on the 21st
-     * to ensure all data from the 20th has been synced/uploaded.
-     */
 
     // 1. CALCULATE LAST DAY OF CURRENT MONTH
     // const lastDayDateObject = new Date(
@@ -1441,19 +1580,19 @@ exports.processMonthlyPayroll = async () => {
     // );
     // const lastDayOfMonth = lastDayDateObject.getDate();
 
-    // // 2. THE SAFETY GATE
+    // 2. SAFETY GATE: run only on last day of month
     // if (today.getDate() !== lastDayOfMonth) {
     //   console.log(
-    //     `[Billing] Skipping: Today is ${today.getDate()}. Billing will run on the ${lastDayOfMonth}th.`,
+    //     `[Payroll] Skipping: Today is ${today.getDate()}. Payroll will run on the ${lastDayOfMonth}th.`,
     //   );
     //   return;
     // }
 
-    // console.log(
-    //   `[Billing] Starting month-end processing for ${today.toDateString()}...`,
-    // );
+    console.log(
+      `[Payroll] Starting month-end processing for ${today.toDateString()}...`,
+    );
 
-    // RANGE CALCULATION: 20th of last month to 20th of this month
+    // 3. RANGE CALCULATION: 20th of last month to 20th of this month
     const startRange = new Date(
       today.getFullYear(),
       today.getMonth() - 1,
@@ -1483,13 +1622,13 @@ exports.processMonthlyPayroll = async () => {
     const physios = await Physio.find({ isActive: true });
 
     for (const p of physios) {
-      // 1. Calculate Approved/Paid Petrol Kms
+      // 1. Calculate Approved/Paid/Pending Petrol Kms
       const petrolAgg = await PetrolAllowance.aggregate([
         {
           $match: {
             physioId: p._id,
             date: { $gte: startRange, $lte: endRange },
-            status: { $in: ["Approved", "Paid"] },
+            status: { $in: ["Approved", "Paid", "Pending"] }, // include Pending
           },
         },
         { $group: { _id: null, total: { $sum: "$finalDailyKms" } } },
@@ -1525,15 +1664,12 @@ exports.processMonthlyPayroll = async () => {
       const incentivePerSession = Number(p.physioIncentive || 0);
       const petrolRatePerKm = Number(p.physioPetrolAlw || 0);
 
-      // Deduction logic: Salary / 30 days * number of leaves
       const deductionAmount = Math.round((baseSalary / 30) * leavesCount);
-
       const grossSalary =
         baseSalary +
         vehicleMaintenance +
         incentivePerSession * completedSessions +
         totalKms * petrolRatePerKm;
-
       const netSalary = grossSalary - deductionAmount;
 
       // 5. Upsert Payroll Record
@@ -1551,7 +1687,6 @@ exports.processMonthlyPayroll = async () => {
           NoofLeave: leavesCount,
           TotalAmountDeducted: deductionAmount,
           payrRollCompletedSessions: completedSessions,
-          // Added metadata for audit logs
           calculationCycle: `${startRange.toDateString()} to ${endRange.toDateString()}`,
         },
         { upsert: true, new: true },
@@ -1560,6 +1695,16 @@ exports.processMonthlyPayroll = async () => {
       console.log(
         `[Payroll] Processed: ${p.physioName || p._id} | Net: ${Math.round(netSalary)}`,
       );
+
+      // 6. Update Pending Petrol Allowances to Paid
+      await PetrolAllowance.updateMany(
+        {
+          physioId: p._id,
+          date: { $gte: startRange, $lte: endRange },
+          status: "Pending",
+        },
+        { $set: { status: "Paid" } },
+      );
     }
 
     console.log(`[Payroll] Monthly processing finished successfully.`);
@@ -1567,7 +1712,6 @@ exports.processMonthlyPayroll = async () => {
     console.error("Critical Payroll Error:", err);
   }
 };
-
 exports.initDailySessionGeneration = () =>
   cron.schedule("00 5 * * 1-6", () => this.processDailySessionGeneration(), {
     timezone: "Asia/Kolkata",
@@ -1591,7 +1735,7 @@ exports.initMonthlyBillingGeneration = () =>
     timezone: "Asia/Kolkata",
   });
 exports.initMonthlyPayrollCron = () =>
-  // cron.schedule("58 15 * * *", () => this.processMonthlyPayroll(), {
+  // cron.schedule("35 15 * * *", () => this.processMonthlyPayroll(), {
   cron.schedule("30 9 28-31 * *", () => this.processMonthlyPayroll(), {
     timezone: "Asia/Kolkata",
   });

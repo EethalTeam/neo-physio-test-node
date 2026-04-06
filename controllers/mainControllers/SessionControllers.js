@@ -1271,6 +1271,7 @@ exports.SessionEnd = async (req, res) => {
   const mongooseSession = await mongoose.startSession();
   mongooseSession.startTransaction();
 
+  let session; // Keep session reference for petrol allowance
   try {
     const {
       _id,
@@ -1306,13 +1307,11 @@ exports.SessionEnd = async (req, res) => {
     const Status = await SessionStatus.findOne({
       sessionStatusName: action,
     }).session(mongooseSession);
-
     if (!Status) throw new Error("Session Status is not found");
     sessionUpdateData.sessionStatusId = Status._id;
 
     // 3) Update Current Session
-    // We update first so it's included in the "unbilled" count below
-    const session = await Session.findByIdAndUpdate(
+    session = await Session.findByIdAndUpdate(
       _id,
       { $set: sessionUpdateData },
       { new: true, runValidators: true, session: mongooseSession },
@@ -1322,13 +1321,11 @@ exports.SessionEnd = async (req, res) => {
     // ===== MONTHLY SESSION COUNT UPDATE =====
     if (Status.sessionStatusName === "Completed") {
       const sessionDateObj = new Date(session.sessionDate);
-
       const monthStart = new Date(
         sessionDateObj.getFullYear(),
         sessionDateObj.getMonth(),
         1,
       );
-
       const monthEnd = new Date(
         sessionDateObj.getFullYear(),
         sessionDateObj.getMonth() + 1,
@@ -1354,20 +1351,18 @@ exports.SessionEnd = async (req, res) => {
     const patient = await Patient.findById(session.patientId)
       .populate("FeesTypeId")
       .session(mongooseSession);
-
     if (!patient) throw new Error("Patient not found");
 
     // ------------------------------
     // 5) PER MONTH BILLING (EVERY 26 UNBILLED SESSIONS)
     // ------------------------------
     if (patient.FeesTypeId?.feesTypeName === "PerMonth") {
-      // Aggregate all unbilled completed sessions for this patient
       const unbilledData = await Session.aggregate([
         {
           $match: {
             patientId: patient._id,
             isBilled: false,
-            sessionStatusId: Status._id, // Only count sessions marked as completed/action status
+            sessionStatusId: Status._id,
           },
         },
         {
@@ -1380,12 +1375,10 @@ exports.SessionEnd = async (req, res) => {
           },
         },
       ]).session(mongooseSession);
-      console.log(unbilledData, "unbilledData");
+
       const unbilledCount = unbilledData.length > 0 ? unbilledData[0].count : 0;
-      console.log(unbilledCount, "unbilledCount");
-      // Logic: Trigger if count is 26, 52, 78, etc.
+
       if (unbilledCount > 0 && unbilledCount % 26 === 0) {
-        console.log("26th session");
         const today = new Date();
         const currentMonth = today.getMonth() + 1;
         const currentYear = today.getFullYear();
@@ -1395,7 +1388,6 @@ exports.SessionEnd = async (req, res) => {
         const toDate = unbilledData[0].lastSessionDate;
         const sessionIdsToBill = unbilledData[0].sessionIds;
 
-        // --- Advance Calculation ---
         const debitDoc = await Debit.findOne({
           patientId: patient._id,
           DebitAmount: { $gt: 0 },
@@ -1439,9 +1431,9 @@ exports.SessionEnd = async (req, res) => {
           debitDoc.DebitDate = new Date();
           await debitDoc.save({ session: mongooseSession });
         }
+
         const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
-        console.log(invoiceNo, "invoiceNo");
-        // --- Generate Bill ---
+
         await Bill.create(
           [
             {
@@ -1463,7 +1455,6 @@ exports.SessionEnd = async (req, res) => {
           { session: mongooseSession },
         );
 
-        // --- Mark specifically found sessions as billed ---
         await Session.updateMany(
           { _id: { $in: sessionIdsToBill } },
           { $set: { isBilled: true } },
@@ -1490,7 +1481,6 @@ exports.SessionEnd = async (req, res) => {
       const reviewTypeDefault = await ReviewType.findOne({
         reviewTypeName: "RedFlags",
       }).session(mongooseSession);
-
       const reviewStatusDefault = await ReviewStatus.findOne({
         reviewStatusName: "Pending",
       }).session(mongooseSession);
@@ -1521,94 +1511,172 @@ exports.SessionEnd = async (req, res) => {
       }
     }
 
-    // ------------------------------
-    // 7) Petrol Allowance Logic
-    // ------------------------------
-    const kmsToAdd =
-      Number(patient.visitOrder) === 1
-        ? Number(patient.KmsfromHub || 0)
-        : Number(patient.kmsFromPrevious || 0);
-
-    const allowanceDate = new Date(session.sessionDate);
-    allowanceDate.setHours(12, 0, 0, 0);
-
-    await PetrolAllowance.findOneAndUpdate(
-      { physioId: session.physioId, date: allowanceDate },
-      {
-        $setOnInsert: {
-          physioId: session.physioId,
-          date: allowanceDate,
-          completedKms: 0,
-          canceledKms: 0,
-          manualKms: 0,
-          finalDailyKms: 0,
-          amountPerKm: 0,
-          totalAmount: 0,
-          status: "Pending",
-        },
-      },
-      { new: true, upsert: true, session: mongooseSession },
-    );
-
-    await PetrolAllowance.findOneAndUpdate(
-      { physioId: session.physioId, date: allowanceDate },
-      { $inc: { completedKms: kmsToAdd, finalDailyKms: kmsToAdd } },
-      { new: true, session: mongooseSession },
-    );
-
-    const updated = await PetrolAllowance.findOneAndUpdate(
-      {
-        physioId: session.physioId,
-        date: allowanceDate,
-        "summary.patientId": session.patientId,
-      },
-      {
-        $inc: { "summary.$.travelKm": kmsToAdd },
-        $set: {
-          "summary.$.type": "Completed",
-          "summary.$.sessionId": session._id,
-        },
-      },
-      { new: true, session: mongooseSession },
-    );
-
-    if (!updated) {
-      await PetrolAllowance.findOneAndUpdate(
-        { physioId: session.physioId, date: allowanceDate },
-        {
-          $push: {
-            summary: {
-              patientId: session.patientId,
-              travelKm: kmsToAdd,
-              type: "Completed",
-              sessionId: session._id,
-            },
-          },
-        },
-        { new: true, session: mongooseSession },
-      );
-    }
-
     await mongooseSession.commitTransaction();
-
-    return res.status(200).json({
-      success: true,
-      message: "Session ended successfully",
-      data: session,
-    });
   } catch (error) {
     await mongooseSession.abortTransaction();
     console.error("❌ SessionEnd Failed. Transaction Aborted:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
   } finally {
     mongooseSession.endSession();
   }
+
+  // -------------------------
+  // PetrolAllowance runs always if session is completed
+  // -------------------------
+  try {
+    if (session) {
+      const completedStatus = await SessionStatus.findById(
+        session.sessionStatusId,
+      );
+      if (completedStatus?.sessionStatusName === "Completed") {
+        const patient = await Patient.findById(session.patientId);
+        const kmsToAdd =
+          Number(patient.visitOrder) === 1
+            ? Number(patient.KmsfromHub || 0)
+            : Number(patient.kmsFromPrevious || 0);
+
+        const allowanceDate = new Date(session.sessionDate);
+        allowanceDate.setHours(12, 0, 0, 0);
+
+        // Initial upsert
+        await PetrolAllowance.findOneAndUpdate(
+          { physioId: session.physioId, date: allowanceDate },
+          {
+            $setOnInsert: {
+              physioId: session.physioId,
+              date: allowanceDate,
+              completedKms: 0,
+              canceledKms: 0,
+              manualKms: 0,
+              finalDailyKms: 0,
+              amountPerKm: 0,
+              totalAmount: 0,
+              status: "Pending",
+            },
+          },
+          { new: true, upsert: true },
+        );
+
+        // Increment Kms
+        await PetrolAllowance.findOneAndUpdate(
+          { physioId: session.physioId, date: allowanceDate },
+          { $inc: { completedKms: kmsToAdd, finalDailyKms: kmsToAdd } },
+          { new: true },
+        );
+
+        const updated = await PetrolAllowance.findOneAndUpdate(
+          {
+            physioId: session.physioId,
+            date: allowanceDate,
+            "summary.patientId": session.patientId,
+          },
+          {
+            $inc: { "summary.$.travelKm": kmsToAdd },
+            $set: {
+              "summary.$.type": "Completed",
+              "summary.$.sessionId": session._id,
+            },
+          },
+          { new: true },
+        );
+
+        if (!updated) {
+          await PetrolAllowance.findOneAndUpdate(
+            { physioId: session.physioId, date: allowanceDate },
+            {
+              $push: {
+                summary: {
+                  patientId: session.patientId,
+                  travelKm: kmsToAdd,
+                  type: "Completed",
+                  sessionId: session._id,
+                },
+              },
+            },
+            { new: true, upsert: true },
+          );
+        }
+
+        console.log("✅ PetrolAllowance calculated successfully");
+      }
+    }
+  } catch (error) {
+    console.error("❌ PetrolAllowance calculation failed:", error);
+  }
+
+  return res.status(200).json({
+    success: true,
+    message:
+      "Session processed successfully. PetrolAllowance calculated if completed.",
+    data: session,
+  });
 };
 
+exports.getSCRStats = async (req, res) => {
+  try {
+    const { year } = req.query;
+    const selectedYear = parseInt(year) || new Date().getFullYear();
+
+    const stats = await Session.aggregate([
+      {
+        $match: {
+          sessionDate: {
+            $gte: new Date(`${selectedYear}-01-01T00:00:00.000Z`),
+            $lte: new Date(`${selectedYear}-12-31T23:59:59.999Z`),
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "sessionstatuses", // collection name for statuses
+          localField: "sessionStatusId",
+          foreignField: "_id",
+          as: "statusObj",
+        },
+      },
+      {
+        $unwind: {
+          path: "$statusObj",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $group: {
+          _id: { $month: "$sessionDate" },
+          scheduled: { $sum: 1 },
+          completed: {
+            $sum: {
+              $cond: [
+                { $eq: ["$statusObj.sessionStatusName", "Completed"] },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          month: "$_id",
+          scheduled: 1,
+          completed: 1,
+          scr: {
+            $cond: [
+              { $gt: ["$scheduled", 0] },
+              { $multiply: [{ $divide: ["$completed", "$scheduled"] }, 100] },
+              0,
+            ],
+          },
+        },
+      },
+      { $sort: { month: 1 } },
+    ]);
+
+    res.status(200).json({ success: true, data: stats });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
 exports.forceBillFirst26Sessions = async (req, res) => {
   try {
     const { patientId } = req.body;

@@ -20,96 +20,183 @@ exports.getAllPetrol = async (req, res) => {
   try {
     const { from, to } = req.body;
 
-    const matchStage = {};
+    const filter = {};
     if (from && to) {
-      matchStage.date = {
-        $gte: new Date(from),
-        $lte: new Date(to),
-      };
+      // Set 'from' to start of day and 'to' to end of day
+      const startDate = new Date(from);
+      startDate.setHours(0, 0, 0, 0);
+
+      const endDate = new Date(to);
+      endDate.setHours(23, 59, 59, 999);
+
+      filter.date = { $gte: startDate, $lte: endDate };
     }
 
-    const petrolData = await Petrol.aggregate([
-      { $match: matchStage },
-      // 1. Join with Physio
-      {
-        $lookup: {
-          from: "physios",
-          localField: "physioId",
-          foreignField: "_id",
-          as: "physioInfo",
-        },
-      },
-      { $unwind: "$physioInfo" },
+    const petrolRecords = await Petrol.find(filter)
+      .populate("physioId", "physioName")
+      .populate("summary.patientId", "patientName")
+      .lean();
 
-      // 2. Unwind summary to get access to individual patient kms
-      { $unwind: { path: "$summary", preserveNullAndEmptyArrays: true } },
+    const physioMap = {};
 
-      // 3. Lookup Patient Details
-      {
-        $lookup: {
-          from: "patients",
-          localField: "summary.patientId",
-          foreignField: "_id",
-          as: "patientInfo",
-        },
-      },
-      { $unwind: { path: "$patientInfo", preserveNullAndEmptyArrays: true } },
+    petrolRecords.forEach((record) => {
+      // Safety check for populated physioId
+      if (!record.physioId || !record.physioId._id) return;
 
-      // 4. Group by each Daily Record ID to calculate the CORRECT daily sum
-      {
-        $group: {
-          _id: "$_id",
-          physioId: { $first: "$physioId" },
-          physioName: { $first: "$physioInfo.physioName" },
-          date: { $first: "$date" },
-          status: { $first: "$status" },
-          // DYNAMIC CALCULATION: Summing the patient kms for this specific day
-          calculatedDailyKm: { $sum: { $ifNull: ["$summary.travelKm", 0] } },
-          patientDetails: {
-            $push: {
-              $cond: [
-                { $gt: ["$summary.patientId", null] },
-                {
-                  patientId: "$summary.patientId",
-                  patientName: "$patientInfo.patientName",
-                  km: "$summary.travelKm",
-                },
-                "$$REMOVE",
-              ],
-            },
-          },
-        },
-      },
+      const physioId = record.physioId._id.toString();
 
-      // 5. Group by Physio to calculate the Grand Total and nest the logs
-      {
-        $group: {
-          _id: "$physioId",
-          physioId: { $first: "$physioId" },
-          physioName: { $first: "$physioName" },
-          // Summing the correctly calculated daily KMs
-          grandTotalPhysioKm: { $sum: "$calculatedDailyKm" },
-          patients: {
-            $push: {
-              dailyLogs: {
-                date: "$date",
-                finalDailyKms: "$calculatedDailyKm", // Now returns 39 instead of 23
-                status: "$status",
-                patientDetails: "$patientDetails",
-              },
-            },
-          },
+      if (!physioMap[physioId]) {
+        physioMap[physioId] = {
+          physioId: physioId,
+          physioName: record.physioId.physioName,
+          grandTotalPhysioKm: 0,
+          patients: [], // Note: This actually stores the daily log entries
+        };
+      }
+
+      let dailyTotalKm = 0;
+      const patientDetails = [];
+
+      if (record.summary && Array.isArray(record.summary)) {
+        record.summary.forEach((s) => {
+          const km = Number(s.travelKm) || 0;
+          dailyTotalKm += km;
+
+          // Only include details if a patient is linked
+          if (s.patientId) {
+            patientDetails.push({
+              patientId: s.patientId._id,
+              patientName: s.patientId.patientName || "Unknown Patient",
+              km: km,
+            });
+          }
+        });
+      }
+
+      physioMap[physioId].grandTotalPhysioKm += dailyTotalKm;
+
+      // Push the record to match the structure expected by your React 'transformedData' useMemo
+      physioMap[physioId].patients.push({
+        dailyLogs: {
+          date: record.date,
+          status: record.status || "Completed",
+          patientDetails: patientDetails,
         },
-      },
-      { $sort: { physioName: 1 } },
-    ]);
+      });
+    });
+
+    const petrolData = Object.values(physioMap)
+      .map((physio) => ({
+        ...physio,
+        // Ensure logs are in chronological order
+        patients: physio.patients.sort(
+          (a, b) => new Date(a.dailyLogs.date) - new Date(b.dailyLogs.date),
+        ),
+      }))
+      .sort((a, b) => a.physioName.localeCompare(b.physioName));
 
     res.status(200).json(petrolData);
   } catch (error) {
-    console.error("Aggregation Error:", error);
-    res.status(500).json({ message: error.message });
+    console.error("Error fetching petrol data:", error);
+    res
+      .status(500)
+      .json({ message: "Internal Server Error", error: error.message });
   }
 };
+// exports.getAllPetrol = async (req, res) => {
+//   try {
+//     const { from, to } = req.body;
+
+//     const matchStage = {};
+//     if (from && to) {
+//       matchStage.date = {
+//         $gte: new Date(from),
+//         $lte: new Date(to),
+//       };
+//     }
+
+//     const petrolData = await Petrol.aggregate([
+//       { $match: matchStage },
+//       // 1. Join with Physio
+//       {
+//         $lookup: {
+//           from: "physios",
+//           localField: "physioId",
+//           foreignField: "_id",
+//           as: "physioInfo",
+//         },
+//       },
+//       { $unwind: "$physioInfo" },
+
+//       // 2. Unwind summary to get access to individual patient kms
+//       { $unwind: { path: "$summary", preserveNullAndEmptyArrays: true } },
+
+//       // 3. Lookup Patient Details
+//       {
+//         $lookup: {
+//           from: "patients",
+//           localField: "summary.patientId",
+//           foreignField: "_id",
+//           as: "patientInfo",
+//         },
+//       },
+//       { $unwind: { path: "$patientInfo", preserveNullAndEmptyArrays: true } },
+
+//       // 4. Group by each Daily Record ID to calculate the CORRECT daily sum
+//       {
+//         $group: {
+//           _id: "$_id",
+//           physioId: { $first: "$physioId" },
+//           physioName: { $first: "$physioInfo.physioName" },
+//           date: { $first: "$date" },
+//           status: { $first: "$status" },
+//           // DYNAMIC CALCULATION: Summing the patient kms for this specific day
+//           calculatedDailyKm: { $sum: { $ifNull: ["$summary.travelKm", 0] } },
+//           patientDetails: {
+//             $push: {
+//               $cond: [
+//                 { $gt: ["$summary.patientId", null] },
+//                 {
+//                   patientId: "$summary.patientId",
+//                   patientName: "$patientInfo.patientName",
+//                   km: "$summary.travelKm",
+//                 },
+//                 "$$REMOVE",
+//               ],
+//             },
+//           },
+//         },
+//       },
+
+//       // 5. Group by Physio to calculate the Grand Total and nest the logs
+//       {
+//         $group: {
+//           _id: "$physioId",
+//           physioId: { $first: "$physioId" },
+//           physioName: { $first: "$physioName" },
+//           // Summing the correctly calculated daily KMs
+//           grandTotalPhysioKm: { $sum: "$calculatedDailyKm" },
+//           patients: {
+//             $push: {
+//               dailyLogs: {
+//                 date: "$date",
+//                 finalDailyKms: "$calculatedDailyKm", // Now returns 39 instead of 23
+//                 status: "$status",
+//                 patientDetails: "$patientDetails",
+//               },
+//             },
+//           },
+//         },
+//       },
+//       { $sort: { physioName: 1 } },
+//     ]);
+
+//     res.status(200).json(petrolData);
+//   } catch (error) {
+//     console.error("Aggregation Error:", error);
+//     res.status(500).json({ message: error.message });
+//   }
+// };
 
 exports.updateManualKms = async (req, res) => {
   try {
