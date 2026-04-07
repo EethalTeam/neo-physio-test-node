@@ -49,6 +49,7 @@ function normalizePayload(body, { patch = false } = {}) {
 
     ...num("TotalSalary", body.TotalSalary),
     ...num("NetSalary", body.NetSalary),
+    ...num("savings", body.savings),
   };
 }
 
@@ -147,22 +148,29 @@ exports.updatePayroll = async (req, res) => {
       return res.status(400).json({ message: "Invalid ID" });
     }
 
-    // 1) load doc
+    // 1. Find payroll
     const payroll = await Payroll.findById(_id);
-    if (!payroll) return res.status(404).json({ message: "Payroll not found" });
+    if (!payroll) {
+      return res.status(404).json({ message: "Payroll not found" });
+    }
 
-    // 2) apply only provided fields (patch)
-    const normalized = normalizePayload(rest, { patch: true });
-    Object.assign(payroll, normalized);
+    // 2. Update provided fields
+    Object.assign(payroll, rest);
 
-    // 3) OPTIONAL: if you want PetrolAmount always derived from km * amountperKm
-    // If amountperKm exists in DB, and PetrolKm is edited, update PetrolAmount automatically
+    // ==============================
+    // 3. PETROL CALCULATION
+    // ==============================
+
     const petrolKm = Number(payroll.PetrolKm || 0);
-    const perKm = Number(payroll.amountperKm || 0);
-    // uncomment if you want auto petrol calc:
-    // payroll.PetrolAmount = Math.round(petrolKm * perKm);
+    const amountperKm = Number(payroll.amountperKm || 0);
 
-    // 4) Leave deduction calc
+    const petrolAmount = petrolKm * amountperKm;
+    payroll.PetrolAmount = Math.round(petrolAmount);
+
+    // ==============================
+    // 4. LEAVE DEDUCTION
+    // ==============================
+
     const months = [
       "January",
       "February",
@@ -177,48 +185,66 @@ exports.updatePayroll = async (req, res) => {
       "November",
       "December",
     ];
+
     const mIndex = months.indexOf(payroll.payrRollMonth);
-    const year = Number(payroll.payrRollYear) || new Date().getFullYear();
-    const daysInMonth =
-      mIndex >= 0 ? new Date(year, mIndex + 1, 0).getDate() : 30;
+    const year = Number(payroll.payrRollYear);
+
+    // const daysInMonth = new Date(year, mIndex + 1, 0).getDate();
 
     const basicSalary = Number(payroll.basicSalary || 0);
     const noOfLeave = Number(payroll.NoofLeave || 0);
-    const perDay = daysInMonth ? basicSalary / daysInMonth : 0;
-    const leaveDeduction = perDay * noOfLeave;
 
-    const manual = Number(payroll.ManualDeduction || 0);
+    const perDaySalary = basicSalary / 30;
+    const leaveDeduction = perDaySalary * noOfLeave;
 
-    payroll.TotalAmountDeducted = Math.round(leaveDeduction + manual);
+    const manualDeduction = Number(payroll.ManualDeduction || 0);
 
-    // 5) Total + Net salary calc (always updates when any related field changes)
+    const totalDeduction = leaveDeduction + manualDeduction;
+
+    payroll.TotalAmountDeducted = Math.round(totalDeduction);
+
+    // ==============================
+    // 5. TOTAL SALARY
+    // ==============================
+
+    const vehicleMaintanance = Number(payroll.vehicleMaintanance || 0);
+    const incentive = Number(payroll.Incentive || 0);
+
     const totalSalary =
-      basicSalary +
-      Number(payroll.vehicleMaintanance || 0) +
-      Number(payroll.PetrolAmount || 0) +
-      Number(payroll.Incentive || 0);
-
-    const netSalary =
-      totalSalary -
-      Number(payroll.TotalAmountDeducted || 0) -
-      Number(payroll.ESI || 0) -
-      Number(payroll.PF || 0);
+      basicSalary + vehicleMaintanance + payroll.PetrolAmount + incentive;
 
     payroll.TotalSalary = Math.round(totalSalary);
+
+    // ==============================
+    // 6. NET SALARY
+    // ==============================
+
+    const esi = Number(payroll.ESI || 0);
+    const pf = Number(payroll.PF || 0);
+    const savings = Number(payroll.savings || 0);
+
+    const netSalary = totalSalary - totalDeduction - esi - pf - savings;
+
     payroll.NetSalary = Math.round(netSalary);
+
+    // ==============================
+    // 7. SAVE
+    // ==============================
 
     await payroll.save();
 
-    return res.status(200).json({
+    res.status(200).json({
       message: "Payroll updated successfully",
       data: payroll,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    res.status(500).json({
+      message: error.message,
+    });
   }
 };
 
-// ✅ DELETE
+// DELETE
 exports.deletePayroll = async (req, res) => {
   try {
     const { _id } = req.body;
@@ -239,7 +265,6 @@ exports.deletePayroll = async (req, res) => {
   }
 };
 
-// ✅ UPSERT (important for cron) - create if not exists, else update
 exports.upsertPayroll = async (req, res) => {
   try {
     const payload = normalizePayload(req.body);

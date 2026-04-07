@@ -47,9 +47,14 @@ const PayrollSchema = new mongoose.Schema(
     NetSalary: {
       type: Number,
     },
+    savings: {
+      type: Number,
+    },
     NoofLeave: {
       type: Number,
     },
+    totalWorkingDays: { type: Number, default: 0 },
+    attendedDays: { type: Number, default: 0 },
     TotalSalary: {
       type: Number,
     },

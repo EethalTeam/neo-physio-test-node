@@ -1573,20 +1573,20 @@ exports.processMonthlyPayroll = async () => {
     const today = new Date();
 
     // 1. CALCULATE LAST DAY OF CURRENT MONTH
-    // const lastDayDateObject = new Date(
-    //   today.getFullYear(),
-    //   today.getMonth() + 1,
-    //   0,
-    // );
-    // const lastDayOfMonth = lastDayDateObject.getDate();
+    const lastDayDateObject = new Date(
+      today.getFullYear(),
+      today.getMonth() + 1,
+      0,
+    );
+    const lastDayOfMonth = lastDayDateObject.getDate();
 
     // 2. SAFETY GATE: run only on last day of month
-    // if (today.getDate() !== lastDayOfMonth) {
-    //   console.log(
-    //     `[Payroll] Skipping: Today is ${today.getDate()}. Payroll will run on the ${lastDayOfMonth}th.`,
-    //   );
-    //   return;
-    // }
+    if (today.getDate() !== lastDayOfMonth) {
+      console.log(
+        `[Payroll] Skipping: Today is ${today.getDate()}. Payroll will run on the ${lastDayOfMonth}th.`,
+      );
+      return;
+    }
 
     console.log(
       `[Payroll] Starting month-end processing for ${today.toDateString()}...`,
@@ -1649,7 +1649,64 @@ exports.processMonthlyPayroll = async () => {
         { $group: { _id: null, count: { $sum: 1 } } },
       ]);
       const completedSessions = sessionAgg[0]?.count || 0;
+      // 2B. Calculate Working Days (distinct session dates)
+      // Distinct session dates with Pass Completed
+      // 2B. Calculate Working Days including Paid Leaves
+      // Distinct session dates with Pass Completed
+      const workingdayAgg = await Session.aggregate([
+        {
+          $match: {
+            physioId: p._id,
+            sessionDate: { $gte: startRange, $lte: endRange },
+            sessionStatusId: new mongoose.Types.ObjectId(
+              "691ec69eae0e10763c8f21e0",
+            ),
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: "%Y-%m-%d",
+                date: "$sessionDate",
+              },
+            },
+          },
+        },
+        { $count: "days" },
+      ]);
+      let workingDays = workingdayAgg[0]?.days || 0;
+      const totalWorkingdayAgg = await Session.aggregate([
+        {
+          $match: {
+            sessionDate: { $gte: startRange, $lte: endRange },
+            sessionStatusId: new mongoose.Types.ObjectId(
+              "691ec69eae0e10763c8f21e0",
+            ),
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: "%Y-%m-%d",
+                date: "$sessionDate",
+              },
+            },
+          },
+        },
+        { $count: "days" },
+      ]);
+      let totalworkingDays = totalWorkingdayAgg[0]?.days || 0;
 
+      // Add Paid Leave days
+      const paidLeaveCount = await LeaveModel.countDocuments({
+        physioId: p._id,
+        LeaveDate: { $gte: startRange, $lte: endRange },
+        PaidLeave: true,
+        isActive: true,
+      });
+      workingDays += paidLeaveCount;
       // 3. Calculate Unpaid Leaves
       const leavesCount = await LeaveModel.countDocuments({
         physioId: p._id,
@@ -1663,15 +1720,22 @@ exports.processMonthlyPayroll = async () => {
       const vehicleMaintenance = Number(p.physioVehicleMTC || 0);
       const incentivePerSession = Number(p.physioIncentive || 0);
       const petrolRatePerKm = Number(p.physioPetrolAlw || 0);
+      // Salary per day
+      const salaryPerDay = baseSalary / 30;
 
-      const deductionAmount = Math.round((baseSalary / 30) * leavesCount);
+      // Deduction only for unpaid leaves
+      const deductionAmount = Math.round(salaryPerDay * leavesCount);
+
+      // Total salary includes working days (sessions + paid leave)
+      const salaryFromWorkingDays = Math.round(salaryPerDay * workingDays);
+
       const grossSalary =
-        baseSalary +
+        salaryFromWorkingDays +
         vehicleMaintenance +
         incentivePerSession * completedSessions +
         totalKms * petrolRatePerKm;
-      const netSalary = grossSalary - deductionAmount;
 
+      const netSalary = grossSalary - deductionAmount;
       // 5. Upsert Payroll Record
       await Payroll.findOneAndUpdate(
         {
@@ -1681,12 +1745,25 @@ exports.processMonthlyPayroll = async () => {
         },
         {
           payRollDate: today,
+
+          // SAVE SALARY DETAILS
+          basicSalary: baseSalary,
+          vehicleMaintanance: vehicleMaintenance,
+          amountperKm: petrolRatePerKm,
+          Incentive: incentivePerSession,
+
           PetrolKm: totalKms,
+          PetrolAmount: totalKms * petrolRatePerKm,
+
           TotalSalary: Math.round(grossSalary),
           NetSalary: Math.round(netSalary),
+
           NoofLeave: leavesCount,
           TotalAmountDeducted: deductionAmount,
+
           payrRollCompletedSessions: completedSessions,
+          totalWorkingDays: totalworkingDays,
+          attendedDays: workingDays,
           calculationCycle: `${startRange.toDateString()} to ${endRange.toDateString()}`,
         },
         { upsert: true, new: true },
@@ -1735,7 +1812,7 @@ exports.initMonthlyBillingGeneration = () =>
     timezone: "Asia/Kolkata",
   });
 exports.initMonthlyPayrollCron = () =>
-  // cron.schedule("35 15 * * *", () => this.processMonthlyPayroll(), {
+  // cron.schedule("34 13 * * *", () => this.processMonthlyPayroll(), {
   cron.schedule("30 9 28-31 * *", () => this.processMonthlyPayroll(), {
     timezone: "Asia/Kolkata",
   });
