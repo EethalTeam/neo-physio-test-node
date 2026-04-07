@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Payroll = require("../../model/masterModels/Payroll");
-
+const Session = require("../../model/masterModels/Session");
+const LeaveModel = require("../../model/masterModels/Leave");
 // Small helper: allow both old + new field names
 function normalizePayload(body, { patch = false } = {}) {
   // helper: only include key if present in request (patch mode)
@@ -49,7 +50,6 @@ function normalizePayload(body, { patch = false } = {}) {
 
     ...num("TotalSalary", body.TotalSalary),
     ...num("NetSalary", body.NetSalary),
-    ...num("savings", body.savings),
   };
 }
 
@@ -144,33 +144,15 @@ exports.updatePayroll = async (req, res) => {
   try {
     const { _id, ...rest } = req.body;
 
-    if (!_id || !mongoose.Types.ObjectId.isValid(_id)) {
-      return res.status(400).json({ message: "Invalid ID" });
-    }
+    const payroll = await Payroll.findById(_id).populate("physioId");
+    if (!payroll) return res.status(404).json({ message: "Payroll not found" });
 
-    // 1. Find payroll
-    const payroll = await Payroll.findById(_id);
-    if (!payroll) {
-      return res.status(404).json({ message: "Payroll not found" });
-    }
+    // 1) SYNC INCOMING DATA
+    // Using your existing normalization logic
+    const normalized = normalizePayload(rest, { patch: true });
+    Object.assign(payroll, normalized);
 
-    // 2. Update provided fields
-    Object.assign(payroll, rest);
-
-    // ==============================
-    // 3. PETROL CALCULATION
-    // ==============================
-
-    const petrolKm = Number(payroll.PetrolKm || 0);
-    const amountperKm = Number(payroll.amountperKm || 0);
-
-    const petrolAmount = petrolKm * amountperKm;
-    payroll.PetrolAmount = Math.round(petrolAmount);
-
-    // ==============================
-    // 4. LEAVE DEDUCTION
-    // ==============================
-
+    // 2) DATE RANGE & PER DAY RATE
     const months = [
       "January",
       "February",
@@ -185,66 +167,135 @@ exports.updatePayroll = async (req, res) => {
       "November",
       "December",
     ];
-
     const mIndex = months.indexOf(payroll.payrRollMonth);
     const year = Number(payroll.payrRollYear);
 
-    // const daysInMonth = new Date(year, mIndex + 1, 0).getDate();
+    // Standardized to UTC to prevent "Date Shifting" which causes wrong leave counts
+    const startRange = new Date(Date.UTC(year, mIndex - 1, 21, 0, 0, 0));
+    const endRange = new Date(Date.UTC(year, mIndex, 20, 23, 59, 59));
+    const daysInMonth = new Date(year, mIndex + 1, 0).getDate();
 
-    const basicSalary = Number(payroll.basicSalary || 0);
-    const noOfLeave = Number(payroll.NoofLeave || 0);
+    // 3) SESSIONS & LEAVES (Your Original Aggregation Logic)
+    const sessionDaysAgg = await Session.aggregate([
+      {
+        $match: {
+          physioId: payroll.physioId._id,
+          sessionDate: { $gte: startRange, $lte: endRange },
+          sessionStatusId: new mongoose.Types.ObjectId(
+            "691ec69eae0e10763c8f21e0",
+          ),
+        },
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$sessionDate" } },
+        },
+      },
+      { $count: "uniqueDays" },
+    ]);
+    const completedSessionDays = sessionDaysAgg[0]?.uniqueDays || 0;
 
-    const perDaySalary = basicSalary / 30;
-    const leaveDeduction = perDaySalary * noOfLeave;
+    const totalsessionsDays = await Session.aggregate([
+      {
+        $match: {
+          sessionDate: { $gte: startRange, $lte: endRange },
+          sessionStatusId: new mongoose.Types.ObjectId(
+            "691ec69eae0e10763c8f21e0",
+          ),
+        },
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$sessionDate" } },
+        },
+      },
+      { $count: "uniqueDays" },
+    ]);
+    const TotalcompletedSessionDays = totalsessionsDays[0]?.uniqueDays || 0;
 
+    const allLeaves = await LeaveModel.find({
+      physioId: payroll.physioId._id,
+      LeaveDate: { $gte: startRange, $lte: endRange },
+      isActive: true,
+    });
+
+    let paidLeavesCount = 0;
+    let unpaidLeavesCount = 0;
+
+    allLeaves.forEach((leave) => {
+      // Ensure "Half Day" matches your DB string exactly (case-sensitive)
+      const weight = leave.LeaveMode === "Half Day" ? 0.5 : 1;
+      if (leave.PaidLeave) {
+        paidLeavesCount += weight;
+      } else {
+        unpaidLeavesCount += weight;
+      }
+    });
+
+    // 4) BASIC SALARY CALCULATION
+    const totalworkingDays =
+      TotalcompletedSessionDays + paidLeavesCount + unpaidLeavesCount;
+    const totalAttended = completedSessionDays + paidLeavesCount;
+
+    const basicSalary = Number(
+      payroll.basicSalary || payroll.physioId.physioSalary || 0,
+    );
+    const perDayRate = basicSalary / daysInMonth;
+    const earnedBasicSalary = Math.round(perDayRate * totalAttended);
+
+    // 5) ADDITIONS (Petrol, Savings, Maintenance, Incentive)
+    const petrolKm = Number(payroll.PetrolKm || 0);
+    const ratePerKm = Number(payroll.amountperKm || 0);
+    const calculatedPetrolAmt = Math.round(petrolKm * ratePerKm);
+    payroll.PetrolAmount = calculatedPetrolAmt;
+
+    // SAVINGS FAILSAFE: Check both casing possibilities from the request
+    const incomingSavings =
+      req.body.Savings !== undefined ? req.body.Savings : req.body.savings;
+    const savingsAmt = Number(incomingSavings ?? payroll.savings ?? 0);
+
+    const vehicleMaint = Number(payroll.vehicleMaintanance || 0);
+    const incentiveAmt = Number(payroll.Incentive || 0);
     const manualDeduction = Number(payroll.ManualDeduction || 0);
 
-    const totalDeduction = leaveDeduction + manualDeduction;
-
-    payroll.TotalAmountDeducted = Math.round(totalDeduction);
-
-    // ==============================
-    // 5. TOTAL SALARY
-    // ==============================
-
-    const vehicleMaintanance = Number(payroll.vehicleMaintanance || 0);
-    const incentive = Number(payroll.Incentive || 0);
-
+    // Calculation: (Basic + MTC + Petrol + Incentive + Savings)
     const totalSalary =
-      basicSalary + vehicleMaintanance + payroll.PetrolAmount + incentive;
+      earnedBasicSalary +
+      vehicleMaint +
+      calculatedPetrolAmt +
+      incentiveAmt +
+      savingsAmt;
 
+    // Net Salary: (Total - Manual Deductions - Statutory)
+    const netSalary =
+      totalSalary -
+      manualDeduction -
+      Number(payroll.ESI || 0) -
+      Number(payroll.PF || 0);
+
+    // 6) STORE FINAL VALUES (Syncing all possible schema field names)
+    payroll.Savings = savingsAmt;
+    payroll.savings = savingsAmt;
     payroll.TotalSalary = Math.round(totalSalary);
-
-    // ==============================
-    // 6. NET SALARY
-    // ==============================
-
-    const esi = Number(payroll.ESI || 0);
-    const pf = Number(payroll.PF || 0);
-    const savings = Number(payroll.savings || 0);
-
-    const netSalary = totalSalary - totalDeduction - esi - pf - savings;
-
     payroll.NetSalary = Math.round(netSalary);
-
-    // ==============================
-    // 7. SAVE
-    // ==============================
+    payroll.totalWorkingDays = totalworkingDays;
+    payroll.attendedDays = totalAttended;
+    payroll.NoofLeave = unpaidLeavesCount;
+    payroll.PaidLeaves = paidLeavesCount; // Explicitly update this for the UI
+    payroll.TotalLeaves = allLeaves.length;
 
     await payroll.save();
 
-    res.status(200).json({
-      message: "Payroll updated successfully",
+    return res.status(200).json({
+      message: `Payroll updated. Total Salary: ₹${payroll.TotalSalary} (Includes ₹${savingsAmt} savings)`,
       data: payroll,
     });
   } catch (error) {
-    res.status(500).json({
-      message: error.message,
-    });
+    console.error("Update Error:", error);
+    return res.status(500).json({ message: error.message });
   }
 };
-
-// DELETE
+// ✅ DELETE
 exports.deletePayroll = async (req, res) => {
   try {
     const { _id } = req.body;
@@ -265,6 +316,7 @@ exports.deletePayroll = async (req, res) => {
   }
 };
 
+// ✅ UPSERT (important for cron) - create if not exists, else update
 exports.upsertPayroll = async (req, res) => {
   try {
     const payload = normalizePayload(req.body);

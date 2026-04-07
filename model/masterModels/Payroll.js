@@ -64,6 +64,9 @@ const PayrollSchema = new mongoose.Schema(
     amountperKm: {
       type: Number,
     },
+    NoofLeave: { type: Number, default: 0 }, // unpaid leaves (for deduction)
+    PaidLeaves: { type: Number, default: 0 }, // optional info
+    TotalLeaves: { type: Number, default: 0 },
   },
   { timestamps: true },
 );
