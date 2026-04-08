@@ -254,7 +254,9 @@ exports.getAllReview = async (req, res) => {
     const now = new Date();
     const istOffset = 5.5 * 60 * 60 * 1000;
     const nowIST = new Date(now.getTime() + istOffset);
-
+    const pendingStatus = await ReviewStatus.findOne({
+      reviewStatusName: "Pending",
+    });
     // TODAY
     const todayStartIST = new Date(nowIST);
     todayStartIST.setUTCHours(0, 0, 0, 0);
@@ -322,31 +324,37 @@ exports.getAllReview = async (req, res) => {
     // 1. TODAY
     const todayReviews = await Review.find({
       reviewDate: { $gte: todayStartUTC, $lte: todayEndUTC },
+      reviewStatusId: pendingStatus._id,
     })
       .populate(populateFields)
       .sort({ reviewDate: -1 });
-
     // 2. YESTERDAY (Or Saturday if today is Monday)
     const yesterdayReviews = await Review.find({
       reviewDate: { $gte: yesterdayStartUTC, $lte: yesterdayEndUTC },
+      reviewStatusId: pendingStatus._id,
     })
       .populate(populateFields)
       .sort({ reviewDate: -1 });
-
     const yesterdayGeneralReviews = yesterdayReviews.filter((review) => {
       const type =
         review.reviewTypeId?.reviewTypeName?.toLowerCase()?.trim() || "";
-      return type === "general";
+
+      const status =
+        review.reviewStatusId?.reviewStatusName?.toLowerCase()?.trim() || "";
+
+      return type === "general" && status === "pending";
     });
 
     // 3. LAST 3 DAYS PENDING REDFLAG
     const last3DaysReviews = await Review.find({
       reviewDate: { $gte: last3DaysStartUTC, $lte: last3DaysEndUTC },
+      reviewStatusId: pendingStatus._id,
     })
       .populate(populateFields)
       .sort({ reviewDate: -1 });
     const tomorrowReviews = await Review.find({
       reviewDate: { $gte: tomorrowStartUTC, $lte: tomorrowEndUTC },
+      reviewStatusId: pendingStatus._id,
     })
       .populate(populateFields)
       .sort({ reviewDate: -1 });
