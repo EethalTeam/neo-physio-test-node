@@ -463,13 +463,15 @@ exports.getAllSessions = async (req, res) => {
 
         const startOfLastDay = new Date(lastWorkingDay);
         startOfLastDay.setHours(0, 0, 0, 0);
-
+        const startOfToday = new Date(today);
+        startOfToday.setHours(0, 0, 0, 0);
         const endOfLastDay = new Date(lastWorkingDay);
         endOfLastDay.setHours(23, 59, 59, 999);
 
         const incompleteSessions = await Session.find({
           physioId,
-          sessionDate: { $gte: startOfLastDay, $lte: endOfLastDay },
+          sessionDate: { $lte: startOfToday },
+          // sessionDate: { $gte: startOfLastDay, $lte: endOfLastDay },
           sessionStatusId: { $nin: [sessionCompletedId, sessionCancelledId] },
         })
           .populate("physioId", "physioName")

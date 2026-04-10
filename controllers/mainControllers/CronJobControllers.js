@@ -514,7 +514,7 @@ exports.processSessionPendingCheck = async (io) => {
     const compId = new mongoose.Types.ObjectId("691ec69eae0e10763c8f21e0");
     const cancId = new mongoose.Types.ObjectId("692585f037162b40bd30a1ef");
     const revCompId = new mongoose.Types.ObjectId("694f85db081ee43cab2d4c8f");
-
+    const endOfToday = new Date(end);
     const roles = await RoleBased.find({
       RoleName: { $in: ["Admin", "SuperAdmin", "HOD"] },
     });
@@ -524,7 +524,8 @@ exports.processSessionPendingCheck = async (io) => {
     });
 
     const pendSessions = await Session.find({
-      sessionDate: { $gte: start, $lte: end },
+      sessionDate: { $lte: endOfToday },
+      // sessionDate: { $gte: start, $lte: end },
       sessionStatusId: { $nin: [compId, cancId] },
     }).populate("patientId physioId");
     const pendReviews = await Review.find({
