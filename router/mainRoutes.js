@@ -300,10 +300,10 @@ router.post(
   "/Session/sessionCancelRevert",
   SessionControllers.sessionCancelRevert,
 );
-// router.post(
-//   "/Session/cancelAllSessionsForPhysioLeave",
-//   SessionControllers.cancelAllSessionsForPhysioLeave,
-// );
+router.post(
+  "/Session/revertCompletedSession",
+  SessionControllers.revertCompletedSession,
+);
 router.post(
   "/Session/reassignTodayCancelledSession",
   SessionControllers.reassignTodayCancelledSession,

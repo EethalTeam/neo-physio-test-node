@@ -1936,3 +1936,40 @@ exports.reassignTodayCancelledSession = async (req, res) => {
     });
   }
 };
+exports.revertCompletedSession = async (req, res) => {
+  try {
+    const { _id } = req.body;
+
+    const session = await Session.findById(_id);
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: "Session not found",
+      });
+    }
+
+    // revert status
+    session.sessionStatusId = "691ecb36b87c5c57dead47a7"; // or scheduled status id
+
+    // clear feedback
+    session.sessionFeedbackPros = "";
+    session.sessionFeedbackCons = "";
+    session.sessionCancelReason = "";
+
+    await session.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Session reverted successfully",
+      session,
+    });
+  } catch (error) {
+    console.error("Revert session error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
