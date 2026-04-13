@@ -15,6 +15,19 @@ const billSchema = new mongoose.Schema(
       ref: "Physio",
       required: true,
     },
+    calculationType: {
+      type: String,
+      enum: ["auto", "manual"],
+      default: "auto",
+    },
+    perSessionRate: {
+      type: Number,
+      default: 0,
+    },
+    calculatedSessionCount: {
+      type: Number,
+      default: 0,
+    },
     paymentType: {
       type: String,
       enum: [

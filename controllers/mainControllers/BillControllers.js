@@ -82,11 +82,10 @@ exports.createBill = async (req, res) => {
     let ratePerSession = 0;
     console.log(feeAmount, isPerMonth, "feeAmount");
     if (isPerMonth) {
-      //  FIXED: No multiplication
-      totalBill = feeAmount;
-      ratePerSession = 0;
+      // 26 sessions assumed per month
+      ratePerSession = feeAmount / 26;
+      totalBill = (ratePerSession * item.count).toFixed(2);
     } else if (isPerSession) {
-      //  Multiply only here
       ratePerSession = feeAmount;
       totalBill = feeAmount * item.count;
     } else {
