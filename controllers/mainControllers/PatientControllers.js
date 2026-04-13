@@ -317,6 +317,17 @@ exports.createPatients = async (req, res) => {
         fileType: file.mimetype,
       }));
     }
+    let safeMedicalHistory = MedicalHistoryAndRiskFactor;
+
+    if (!safeMedicalHistory || typeof safeMedicalHistory !== "object") {
+      safeMedicalHistory = {};
+    }
+
+    console.log(
+      "MedicalHistoryAndRiskFactor received:",
+      MedicalHistoryAndRiskFactor,
+    );
+    console.log("MedicalHistoryAndRiskFactor used:", safeMedicalHistory);
     const createData = {
       patientName,
       patientCode: newHnpCode,
@@ -336,7 +347,7 @@ exports.createPatients = async (req, res) => {
       patientPinCode,
       patientCondition,
       reviewDate,
-      MedicalHistoryAndRiskFactor,
+      MedicalHistoryAndRiskFactor: safeMedicalHistory,
       otherMedCon,
       currMed,
       typesOfLifeStyle,
@@ -1841,7 +1852,6 @@ exports.sessionAssignPhysio = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 exports.AssignPhysio = async (req, res) => {
   try {
     const {
@@ -1860,122 +1870,100 @@ exports.AssignPhysio = async (req, res) => {
       kmsFromPrevious,
     } = req.body;
 
-    // -----------------------------
-    // Basic validation
-    // -----------------------------
-    if (!_id || !mongoose.Types.ObjectId.isValid(_id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid patient id is required",
-      });
-    }
-
-    if (!physioId || !mongoose.Types.ObjectId.isValid(physioId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid physioId is required",
-      });
-    }
-
-    if (!visitOrder && visitOrder !== 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Visit order is required",
-      });
-    }
-
     const numericVisitOrder = Number(visitOrder);
 
-    if (Number.isNaN(numericVisitOrder) || numericVisitOrder <= 0) {
-      return res.status(400).json({
+    console.log("Incoming Data:", req.body);
+
+    // 1️⃣ get current patient
+    const currentPatient = await Patient.findById(_id);
+
+    if (!currentPatient) {
+      return res.status(404).json({
         success: false,
-        message: "Visit order must be greater than 0",
+        message: "Patient not found in DB",
       });
     }
 
-    if (numericVisitOrder > 7) {
-      return res.status(400).json({
-        success: false,
-        message: "Visit order cannot exceed 7",
-      });
-    }
-
-    if (
-      numericVisitOrder > 1 &&
-      (kmsFromPrevious === "" ||
-        kmsFromPrevious === null ||
-        kmsFromPrevious === undefined)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Kms from previous is required when visit order is greater than 1",
-      });
-    }
-
-    // -----------------------------
-    // Duplicate visitOrder check
-    // same physio + not recovered
-    // exclude current patient
-    // -----------------------------
-    const duplicateVisitOrder = await Patient.findOne({
-      _id: { $ne: _id },
-      physioId: new mongoose.Types.ObjectId(physioId),
-      visitOrder: numericVisitOrder,
+    // 2️⃣ get all patients for this physio
+    const patients = await Patient.find({
+      physioId: physioId,
       isRecovered: false,
-    });
+    }).sort({ visitOrder: 1 });
 
-    if (duplicateVisitOrder) {
-      return res.status(400).json({
-        success: false,
-        message: `Visit order ${numericVisitOrder} already assigned to another patient for this physio`,
+    // 3️⃣ check if patient already in list
+    let currentIndex = patients.findIndex((p) => p._id.toString() === _id);
+
+    if (currentIndex !== -1) {
+      // remove from current position
+      patients.splice(currentIndex, 1);
+    } else {
+      // add patient if new physio assignment
+      patients.push(currentPatient);
+    }
+
+    // 4️⃣ insert into new visitOrder position
+    patients.splice(numericVisitOrder - 1, 0, currentPatient);
+
+    // remove duplicates
+    const uniquePatients = [];
+    const ids = new Set();
+
+    for (const p of patients) {
+      if (!ids.has(p._id.toString())) {
+        uniquePatients.push(p);
+        ids.add(p._id.toString());
+      }
+    }
+
+    // 5️⃣ update visitOrder
+    for (let i = 0; i < uniquePatients.length; i++) {
+      console.log(
+        `Updating ${uniquePatients[i].patientName} → visitOrder ${i + 1}`,
+      );
+
+      await Patient.findByIdAndUpdate(uniquePatients[i]._id, {
+        visitOrder: i + 1,
+        physioId: physioId,
       });
     }
 
-    // -----------------------------
-    // Update patient
-    // -----------------------------
+    // 6️⃣ update patient extra fields
     const updatedPatient = await Patient.findByIdAndUpdate(
       _id,
       {
-        $set: {
-          sessionStartDate,
-          sessionTime,
-          totalSessionDays,
-          InitialShorttermGoal,
-          goalDuration,
-          physioId,
-          goalDescription,
-          reviewFrequency,
-          visitOrder: numericVisitOrder,
-          KmsfromHub,
-          KmsfLPatienttoHub,
-          kmsFromPrevious,
-        },
+        sessionStartDate,
+        sessionTime,
+        physioId,
+        totalSessionDays,
+        InitialShorttermGoal,
+        goalDuration,
+        goalDescription,
+        reviewFrequency,
+        KmsfromHub,
+        KmsfLPatienttoHub,
+        kmsFromPrevious,
       },
-      { new: true, runValidators: true },
+      { new: true },
     )
       .populate("physioId", "physioName")
       .populate("patientGenderId", "genderName")
       .populate("ReferenceId", "sourceName");
 
-    if (!updatedPatient) {
-      return res.status(400).json({
-        success: false,
-        message: "Unable to update patient physio assignment",
-      });
-    }
+    console.log("Updated Patient:", {
+      name: updatedPatient.patientName,
+      visitOrder: updatedPatient.visitOrder,
+    });
 
     return res.status(200).json({
       success: true,
-      message: "Physio Assigned",
+      message: "Physio Assigned & Visit Order Updated",
       AssignPhysio: updatedPatient,
     });
   } catch (error) {
-    console.error("Error assigning physio:", error);
-    return res.status(500).json({
+    console.error("AssignPhysio Error:", error);
+    res.status(500).json({
       success: false,
-      message: error.message || "Something went wrong",
+      message: error.message,
     });
   }
 };

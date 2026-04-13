@@ -5,7 +5,7 @@ const RiskFactorSubSchema = new mongoose.Schema(
     RiskFactorID: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "RiskFactor",
-      required: true,
+      // required: true,
     },
     isExist: {
       type: Boolean,

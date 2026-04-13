@@ -470,7 +470,7 @@ exports.getAllSessions = async (req, res) => {
 
         const incompleteSessions = await Session.find({
           physioId,
-          sessionDate: { $lte: startOfToday },
+          sessionDate: { $lt: startOfToday },
           // sessionDate: { $gte: startOfLastDay, $lte: endOfLastDay },
           sessionStatusId: { $nin: [sessionCompletedId, sessionCancelledId] },
         })

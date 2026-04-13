@@ -11,6 +11,9 @@ const physioSChema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    sessionPerDay: {
+      type: Number,
+    },
     EmpCode: {
       type: String,
       trim: true,

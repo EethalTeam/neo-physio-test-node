@@ -209,7 +209,7 @@ router.post("/LeaveControllers/markLeave", LeaveControllers.markLeave);
 router.post("/LeaveControllers/getAllLeave", LeaveControllers.getAllLeave);
 //Patients
 router.post(
-  "/Patient/createPatient",
+  "/Patient/createPatients",
   PatientControllers.patientUploadMiddleware,
   PatientControllers.createPatients,
 );
