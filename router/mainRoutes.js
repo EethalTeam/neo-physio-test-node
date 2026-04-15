@@ -155,7 +155,7 @@ router.post("/Bill/receivePayment", BillCountrollers.receivePayment);
 router.post("/Bill/getAllBill", BillCountrollers.getAllBill);
 router.post("/Bill/deleteBill", BillCountrollers.deleteBill);
 router.post("/Bill/markBadDebt", BillCountrollers.markBadDebt);
-// router.post("/Bill/resetIsBilled", BillCountrollers.recalculateBillById);
+router.post("/Bill/resetIsBilled", BillCountrollers.recalculateBill);
 router.post("/Bill/revertPayment", BillCountrollers.revertPayment);
 
 router.post(

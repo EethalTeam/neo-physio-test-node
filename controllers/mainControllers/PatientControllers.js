@@ -1525,7 +1525,7 @@ exports.markPatientRecovered = async (req, res) => {
       "691ec69eae0e10763c8f21e0",
     );
 
-    //  TAKE ONLY UNBILLED COMPLETED SESSIONS
+    // TAKE ONLY UNBILLED COMPLETED SESSIONS
     const sessions = await Session.find({
       patientId: patient._id,
       sessionStatusId: COMPLETED_STATUS_ID,
@@ -1544,15 +1544,18 @@ exports.markPatientRecovered = async (req, res) => {
       const lastDate = sessions[sessions.length - 1].sessionDate;
 
       const feeAmount = Number(patient?.feeAmount || 0);
-      const feeType = (patient?.FeesTypeId?.feesTypeName || "").toLowerCase();
+
+      const feeType = (patient?.FeesTypeId?.feesTypeName || "")
+        .replace(/\s+/g, "")
+        .toLowerCase();
 
       let totalBill = 0;
       let ratePerSession = 0;
 
-      // CORRECT LOGIC
+      // BILLING LOGIC
       if (feeType === "permonth") {
-        totalBill = feeAmount; // FIXED
-        ratePerSession = 0;
+        ratePerSession = feeAmount / 26;
+        totalBill = ratePerSession * totalSessionCount;
       } else if (feeType === "persession") {
         ratePerSession = feeAmount;
         totalBill = feeAmount * totalSessionCount;
@@ -1560,21 +1563,37 @@ exports.markPatientRecovered = async (req, res) => {
         throw new Error("Invalid fee type");
       }
 
-      //  ADVANCE CALCULATION (same as manual bill)
+      // ADVANCE CALCULATION
       const advPaid =
         (
-          await Debit.aggregate([
-            { $match: { patientId: patient._id } },
-            { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
-          ])
+          await Debit.aggregate(
+            [
+              { $match: { patientId: patient._id } },
+              {
+                $group: {
+                  _id: null,
+                  total: { $sum: "$DebitAmount" },
+                },
+              },
+            ],
+            { session: dbSession },
+          )
         )[0]?.total || 0;
 
       const usedAdv =
         (
-          await Bill.aggregate([
-            { $match: { patientId: patient._id } },
-            { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
-          ])
+          await Bill.aggregate(
+            [
+              { $match: { patientId: patient._id } },
+              {
+                $group: {
+                  _id: null,
+                  total: { $sum: "$DeductedFromAdvance" },
+                },
+              },
+            ],
+            { session: dbSession },
+          )
         )[0]?.total || 0;
 
       const deduct = Math.min(Math.max(advPaid - usedAdv, 0), totalBill);
@@ -1585,7 +1604,7 @@ exports.markPatientRecovered = async (req, res) => {
       const safeNet = Number((net || 0).toFixed(2));
       const safeRate = Number((ratePerSession || 0).toFixed(2));
 
-      //  INVOICE
+      // INVOICE NUMBER
       const counter = await Counter.findOneAndUpdate(
         { _id: "invoiceNo" },
         { $inc: { seq: 1 } },
@@ -1594,7 +1613,9 @@ exports.markPatientRecovered = async (req, res) => {
 
       const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
 
-      //  CREATE BILL (same structure as manual)
+      const billDate = new Date(lastDate);
+
+      // CREATE BILL
       const bill = await Bill.create(
         [
           {
@@ -1603,6 +1624,7 @@ exports.markPatientRecovered = async (req, res) => {
             invoiceNo,
 
             paymentStatus: safeNet <= 0 ? "Paid" : "Pending",
+
             paymentType:
               safeNet <= 0
                 ? "Full Payment"
@@ -1611,6 +1633,7 @@ exports.markPatientRecovered = async (req, res) => {
                   : "Pending",
 
             ReceivedAmount: safeDeduct,
+
             TotalBilledAmount: safeTotalBill,
             DeductedFromAdvance: safeDeduct,
             NetBilledAmount: safeNet,
@@ -1622,12 +1645,14 @@ exports.markPatientRecovered = async (req, res) => {
             totalAmount: safeTotalBill,
             TotalSessionCount: totalSessionCount,
 
-            month: new Date(lastDate).toLocaleString("default", {
+            month: billDate.toLocaleString("default", {
               month: "long",
             }),
-            year: new Date(lastDate).getFullYear(),
+
+            year: billDate.getFullYear(),
 
             isComplete: safeNet <= 0,
+
             feeType: feeType,
           },
         ],
@@ -1649,7 +1674,7 @@ exports.markPatientRecovered = async (req, res) => {
       );
     }
 
-    // 👉 MARK PATIENT RECOVERED
+    // MARK PATIENT RECOVERED
     const updatedPatient = await Patient.findByIdAndUpdate(
       patientId,
       {

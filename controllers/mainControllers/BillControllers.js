@@ -97,7 +97,7 @@ exports.createBill = async (req, res) => {
     const advPaid =
       (
         await Debit.aggregate([
-          { $match: { patientId: item._id } },
+          { $match: { patientId: new mongoose.Types.ObjectId(patientId) } },
           { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
         ])
       )[0]?.total || 0;
@@ -105,11 +105,10 @@ exports.createBill = async (req, res) => {
     const usedAdv =
       (
         await Bill.aggregate([
-          { $match: { patientId: item._id } },
+          { $match: { patientId: new mongoose.Types.ObjectId(patientId) } },
           { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
         ])
       )[0]?.total || 0;
-
     const deduct = Math.min(Math.max(advPaid - usedAdv, 0), totalBill);
     const net = totalBill - deduct;
 
@@ -931,6 +930,93 @@ exports.getPaymentHistory = async (req, res) => {
       data: history,
     });
   } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+exports.recalculateBill = async (req, res) => {
+  try {
+    const { billId } = req.body;
+
+    if (!billId) {
+      return res.status(400).json({
+        success: false,
+        message: "Bill ID required",
+      });
+    }
+
+    const bill = await Bill.findById(billId);
+
+    if (!bill) {
+      return res.status(404).json({
+        success: false,
+        message: "Bill not found",
+      });
+    }
+
+    const patient = await Patient.findById(bill.patientId).populate(
+      "FeesTypeId",
+    );
+
+    const sessions = await Session.find({
+      billId: bill._id,
+      sessionStatusId: new mongoose.Types.ObjectId(COMPLETED_STATUS_ID),
+    });
+
+    const sessionCount = sessions.length;
+
+    const feeAmount = Number(patient?.feeAmount || 0);
+    const feeTypeName = getNormalizedFeeType(patient);
+
+    const isPerMonth = feeTypeName === "permonth";
+
+    let ratePerSession = 0;
+    let totalBill = 0;
+
+    if (isPerMonth) {
+      ratePerSession = feeAmount / 26;
+      totalBill = ratePerSession * sessionCount;
+    } else {
+      ratePerSession = feeAmount;
+      totalBill = feeAmount * sessionCount;
+    }
+
+    const advPaid =
+      (
+        await Debit.aggregate([
+          { $match: { patientId: patient._id } },
+          { $group: { _id: null, total: { $sum: "$DebitAmount" } } },
+        ])
+      )[0]?.total || 0;
+
+    const usedAdv =
+      (
+        await Bill.aggregate([
+          { $match: { patientId: patient._id } },
+          { $group: { _id: null, total: { $sum: "$DeductedFromAdvance" } } },
+        ])
+      )[0]?.total || 0;
+
+    const deduct = Math.min(Math.max(advPaid - usedAdv, 0), totalBill);
+    const netAmount = totalBill - deduct;
+
+    bill.TotalSessionCount = sessionCount;
+    bill.ratePerSession = Number(ratePerSession.toFixed(2));
+    bill.TotalBilledAmount = Number(totalBill.toFixed(2));
+    bill.DeductedFromAdvance = Number(deduct.toFixed(2));
+    bill.NetBilledAmount = Number(netAmount.toFixed(2));
+
+    await bill.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Bill recalculated successfully",
+      data: bill,
+    });
+  } catch (error) {
+    console.error("Recalculate Bill Error:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
