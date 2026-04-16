@@ -7,7 +7,7 @@ const Consultation = require("../../model/masterModels/Consultation");
 const Review = require("../../model/masterModels/Review");
 const PatientModel = require("../../model/masterModels/Patient");
 const SessionStatus = require("../../model/masterModels/SessionStatus");
-
+const Bill = require("../../model/masterModels/Bill");
 exports.getIncomeByDate = async (req, res) => {
   try {
     let { fromDate, toDate } = req.body;
@@ -308,5 +308,21 @@ exports.monthlyfunnel = async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ message: err.message });
+  }
+};
+exports.getAllBillforDashboard = async (req, res) => {
+  try {
+    const bills = await Bill.find()
+      .populate("patientId")
+      .populate("physioId")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json(bills);
+  } catch (error) {
+    console.error("getAllBill error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch bills",
+    });
   }
 };
