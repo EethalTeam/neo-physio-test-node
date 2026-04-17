@@ -41,6 +41,7 @@ const notificationSchema = new mongoose.Schema(
         "general",
         "Petrol-Allowance",
         "other",
+        "LEAD",
       ],
       default: "general",
     },

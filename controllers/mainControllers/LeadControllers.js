@@ -10,6 +10,7 @@ const path = require("path");
 const mongoose = require("mongoose");
 const Link = require("../../model/masterModels/Link");
 const multer = require("multer");
+const Role = require("../../model/masterModels/RBAC");
 
 // --- MULTER CONFIGURATION FOR LEAD DOCUMENTS ---
 const uploadDir = "uploads/leads";
@@ -77,6 +78,8 @@ exports.leadUploadMiddleware = (req, res, next) => {
 
 exports.createLead = async (req, res) => {
   try {
+    console.log("🚀 Step 1: createLead API called");
+
     const {
       leadName,
       leadAge,
@@ -97,10 +100,19 @@ exports.createLead = async (req, res) => {
       sixdigit,
     } = req.body;
 
+    console.log("📩 Step 2: Request body received", {
+      leadName,
+      leadContactNo,
+      isExternal,
+    });
+
     if (isExternal) {
+      console.log("🌐 Step 3: External lead detected, validating key...");
+
       const validation = await Link.findOne({ key: sixdigit });
 
       if (!validation) {
+        console.log("❌ Step 3.1: Invalid external key");
         return res.status(409).json({
           success: false,
           message: "Invalid key Found",
@@ -108,31 +120,43 @@ exports.createLead = async (req, res) => {
       }
 
       if (validation.isExpired) {
+        console.log("⛔ Step 3.2: External key expired");
         return res.status(409).json({
           success: false,
           message: "This link has been Expired",
         });
       }
+
+      console.log("✅ Step 3.3: External key validated");
     }
+
+    console.log("🔍 Step 4: Checking existing lead...");
 
     const existingLead = await Lead.findOne({ leadContactNo });
 
     if (existingLead) {
+      console.log("⚠️ Step 4.1: Lead already exists");
       return res.status(409).json({
         success: false,
         message: "EXISTING_NUMBER",
       });
     }
 
+    console.log("✅ Step 4.2: No duplicate lead found");
+
     let leadDocuments = [];
 
     if (req.files && req.files.length > 0) {
+      console.log("📎 Step 5: Processing uploaded files");
+
       leadDocuments = req.files.map((file) => ({
         fileName: file.originalname,
         fileUrl: `/uploads/leads/${file.filename}`,
         fileType: file.mimetype,
       }));
     }
+
+    console.log("🧾 Step 6: Generating lead code...");
 
     const lastLead = await Lead.findOne({}, {}, { sort: { createdAt: -1 } });
     let nextLeadNumber = 1;
@@ -144,8 +168,12 @@ exports.createLead = async (req, res) => {
 
     const leadCode = `LEAD${String(nextLeadNumber).padStart(3, "0")}`;
 
+    console.log("🆔 Step 6.1: Generated Lead Code:", leadCode);
+
     let finalLeadSourceId = null;
     let finalLeadSourceName = "";
+
+    console.log("📊 Step 7: Assigning lead source...");
 
     if (ReferenceId) {
       finalLeadSourceId = null;
@@ -182,22 +210,88 @@ exports.createLead = async (req, res) => {
       LeadData.ReferenceId = ReferenceId;
     }
 
+    console.log("💾 Step 8: Saving lead to database...");
+
     const newLead = new Lead(LeadData);
     const savedLead = await newLead.save();
 
+    console.log("✅ Step 8.1: Lead saved successfully", {
+      id: savedLead._id,
+      code: savedLead.leadCode,
+    });
+
+    // 🔔 NOTIFICATION
     if (isExternal) {
+      console.log("🔔 Step 9: Creating notification for external lead...");
+
+      const roles = await Role.find({
+        RoleName: { $in: ["SuperAdmin", "Admin", "HOD"] },
+      });
+      if (!roles.length) {
+        console.log("⚠️ No roles found");
+      } else {
+        // notification logic
+
+        let notifications = [];
+
+        for (const role of roles) {
+          const employees = await Employee.find({ roleId: role._id });
+
+          console.log(`👤 ${role.RoleName} → ${employees.length} employees`);
+
+          for (const emp of employees) {
+            notifications.push({
+              title: "External Lead Received",
+              message: `${leadName} (${leadContactNo}) submitted a lead via external link`,
+              type: "LEAD",
+              referenceId: savedLead._id,
+
+              // ✅ THIS IS THE KEY FIELD
+              toEmployeeId: emp._id,
+
+              roleId: role._id,
+
+              status: "unseen",
+
+              meta: {
+                leadCode: savedLead.leadCode,
+                source: "External",
+                role: role.RoleName,
+              },
+
+              createdAt: new Date(),
+            });
+          }
+        }
+
+        console.log("📨 Notifications ready:", notifications.length);
+
+        await Notification.insertMany(notifications);
+
+        console.log("✅ Notifications inserted successfully");
+      }
+    }
+    // expire link
+    if (isExternal) {
+      console.log("⏳ Step 10: Expiring external link...");
+
       const validation = await Link.findOne({ key: sixdigit });
       if (validation && !validation.isExpired) {
         validation.isExpired = true;
         await validation.save();
       }
+
+      console.log("✔️ Step 10.1: Link expired");
     }
+
+    console.log("🎉 Step 11: API completed successfully");
 
     return res.status(201).json(savedLead);
   } catch (error) {
-    console.error("createLead error:", error);
+    console.error("❌ createLead error:", error);
 
     if (error.code === 11000) {
+      console.log("⚠️ Duplicate lead code error");
       return res.status(400).json({
         success: false,
         message: "Lead code already exists.",
@@ -210,7 +304,6 @@ exports.createLead = async (req, res) => {
     });
   }
 };
-
 exports.updateLead = async (req, res) => {
   try {
     const {
