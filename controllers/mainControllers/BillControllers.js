@@ -170,13 +170,6 @@ exports.markBadDebt = async (req, res) => {
   try {
     const { billId } = req.body;
 
-    if (!billId) {
-      return res.status(400).json({
-        success: false,
-        message: "Bill ID is required",
-      });
-    }
-
     const bill = await Bill.findById(billId);
 
     if (!bill) {
@@ -189,20 +182,21 @@ exports.markBadDebt = async (req, res) => {
     if (bill.isBadDebt) {
       return res.status(400).json({
         success: false,
-        message: "Bill is already marked as bad debt",
+        message: "Bill already marked as bad debt",
       });
     }
 
-    bill.isBadDebt = true;
+    const net = Number(bill.NetBilledAmount || 0);
+    const discount = Number(bill.DiscountAmount || 0);
+    const received = Number(bill.ReceivedAmount || 0);
 
-    if (bill.ReceivedAmount > 0) {
-      bill.paymentStatus = "Paid";
-    } else {
-      bill.paymentStatus = "Bad Debt";
-    }
+    const remaining = Math.max(net - discount - received, 0);
+
+    bill.isBadDebt = true;
+    bill.badDebtAmount = remaining;
 
     bill.paymentType = "Bad Debt";
-    bill.isComplete = bill.ReceivedAmount > 0;
+    bill.paymentStatus = "Bad Debt";
 
     await bill.save();
 

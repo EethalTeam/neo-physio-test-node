@@ -1,9 +1,10 @@
 const mongoose = require("mongoose");
 const LeaveModel = require("../../model/masterModels/Leave");
-
+const Role = require("../../model/masterModels/RBAC");
 const Session = require("../../model/masterModels/Session");
 const SessionStatus = require("../../model/masterModels/SessionStatus");
-
+const Employee = require("../../model/masterModels/Physio");
+const Notification = require("../../model/masterModels/Notification");
 exports.markLeave = async (req, res) => {
   try {
     const { physioId, LeaveDate, LeaveMode } = req.body;
@@ -44,6 +45,42 @@ exports.markLeave = async (req, res) => {
       "physioId",
       "physioName",
     );
+    // 🔔 NOTIFICATION
+
+    // 🔔 NOTIFICATION → ONLY HOD
+    const hodRole = await Role.findOne({ RoleName: "HOD" });
+
+    if (!hodRole) {
+      console.log("⚠️ HOD role not found");
+    } else {
+      const hodEmployees = await Employee.find({ roleId: hodRole._id });
+
+      console.log(`👤 HOD → ${hodEmployees.length} employees`);
+
+      const notifications = hodEmployees.map((emp) => ({
+        title: "Leave Updated",
+        message: `${populated?.physioId?.physioName || "Physio"} marked as leave - Leave Date is ${LeaveDate}`,
+        type: "Leaveupdate",
+        referenceId: savedLeave._id,
+
+        toEmployeeId: emp._id,
+        roleId: hodRole._id,
+
+        status: "unseen",
+
+        meta: {
+          leaveId: savedLeave._id,
+          role: "HOD",
+        },
+
+        createdAt: new Date(),
+      }));
+
+      if (notifications.length) {
+        await Notification.insertMany(notifications);
+        console.log("✅ HOD Notifications sent");
+      }
+    }
 
     const selectedDateStr = new Date(LeaveDate).toISOString().split("T")[0];
     const todayStr = new Date().toISOString().split("T")[0];

@@ -8,6 +8,7 @@ const Review = require("../../model/masterModels/Review");
 const PatientModel = require("../../model/masterModels/Patient");
 const SessionStatus = require("../../model/masterModels/SessionStatus");
 const Bill = require("../../model/masterModels/Bill");
+const ReviewStatus = require("../../model/masterModels/ReviewStatus");
 exports.getIncomeByDate = async (req, res) => {
   try {
     let { fromDate, toDate } = req.body;
@@ -162,7 +163,13 @@ exports.getAllDashBoard = async (req, res) => {
   try {
     let { fromDate, toDate } = req.body;
     let dateQuery = {};
+    const startDay = new Date();
+    startDay.setHours(0, 0, 0, 0);
 
+    const endDay = new Date();
+    endDay.setHours(23, 59, 59, 999);
+    let startDate;
+    let endDate;
     if (fromDate && !toDate) toDate = fromDate;
 
     if (fromDate && toDate) {
@@ -173,47 +180,40 @@ exports.getAllDashBoard = async (req, res) => {
         },
       };
     }
+    const pendingStatus = await ReviewStatus.findOne({
+      reviewStatusName: "Pending",
+    });
 
+    const completedStatusReview = await ReviewStatus.findOne({
+      reviewStatusName: "Completed",
+    });
     let lead = await Leads.countDocuments(dateQuery);
     let patient = await Patients.countDocuments({
       ...dateQuery,
       isRecovered: { $ne: true },
     });
 
-    let pendingreviews = await Review.find()
-      .populate("reviewStatusId")
-      .then((reviews) =>
-        reviews.filter(
-          (r) =>
-            r.reviewStatusId?.reviewStatusName?.toLowerCase() === "pending",
-        ),
-      );
+    let pendingreviews = await Review.countDocuments({
+      reviewStatusId: pendingStatus?._id,
+      ...dateQuery, // IMPORTANT
+    });
 
-    let completedReview = await Review.find()
-      .populate("reviewStatusId")
-      .then((reviews) =>
-        reviews.filter(
-          (r) =>
-            r.reviewStatusId?.reviewStatusName?.toLowerCase() === "completed",
-        ),
-      );
+    let completedReview = await Review.countDocuments({
+      reviewStatusId: completedStatusReview?._id,
+      ...dateQuery,
+    });
 
     let completedStatus = await SessionStatus.findOne({
       sessionStatusName: "Completed",
     });
 
-    let completedSessionsCount = await Session.find({
+    let completedSessionsCount = await Session.countDocuments({
       sessionStatusId: completedStatus?._id,
-      ...(fromDate && {
-        sessionDate: {
-          $gte: new Date(fromDate + "T00:00:00.000Z"),
-          $lte: new Date((toDate || fromDate) + "T23:59:59.999Z"),
-        },
-      }),
+      sessionDate: {
+        $gte: startDate,
+        $lt: endDate,
+      },
     });
-
-    let startDate;
-    let endDate;
 
     if (fromDate && toDate) {
       startDate = new Date(fromDate + "T00:00:00.000Z");
@@ -239,37 +239,31 @@ exports.getAllDashBoard = async (req, res) => {
       isActive: true,
     });
 
-    let monthlySessions = await Session.find({
+    let monthlySessions = await Session.countDocuments({
       sessionDate: { $gte: startDate, $lt: endDate },
     });
-
-    const startDay = new Date();
-    startDay.setHours(0, 0, 0, 0);
-
-    const endDay = new Date();
-    endDay.setHours(23, 59, 59, 999);
 
     let todaysession = await Session.find({
       sessionDate: { $gte: startDay, $lte: endDay },
     });
-    let todayCompletedSession = await Session.find({
+    let todayCompletedSession = await Session.countDocuments({
       sessionStatusId: completedStatus?._id,
-      sessionDate: { $gte: startDay, $lt: endDay },
+      sessionDate: { $gte: startDay, $lte: endDay },
     });
 
     let filter = {
-      lead: lead,
-      patient: patient,
+      lead,
+      patient,
       physio: physio.length,
-      monthlySessions: monthlySessions.length,
-      pendingreviews: pendingreviews.length,
+      monthlySessions,
+      pendingreviews,
       patientRecovered: patientRecovered.length,
       patientRecoveredOthers: patientRecoveredOthers.length,
-      completedReview: completedReview.length,
+      completedReview,
       patientRecover: patientRecover.length,
-      sessionCompleted: completedSessionsCount.length,
+      sessionCompleted: completedSessionsCount,
       todaysession: todaysession.length,
-      todayCompletedSession: todayCompletedSession.length,
+      todayCompletedSession,
     };
 
     return res.status(200).json(filter);
@@ -312,7 +306,9 @@ exports.monthlyfunnel = async (req, res) => {
 };
 exports.getAllBillforDashboard = async (req, res) => {
   try {
-    const bills = await Bill.find()
+    const bills = await Bill.find({
+      paymentStatus: { $in: ["Pending", "Partially Paid"] },
+    })
       .populate("patientId")
       .populate("physioId")
       .sort({ createdAt: -1 });

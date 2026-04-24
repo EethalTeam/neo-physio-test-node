@@ -107,6 +107,10 @@ const billSchema = new mongoose.Schema(
       enum: ["permonth", "persession"],
       default: "persession",
     },
+    badDebtAmount: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
