@@ -105,7 +105,7 @@ exports.getAllPayroll = async (req, res) => {
     const payrolls = await Payroll.find(query)
       .populate({
         path: "physioId",
-        select: "physioName physioSpcl roleId",
+        select: "physioName physioSpcl",
         populate: { path: "roleId", select: "RoleName" },
       })
       .sort({ createdAt: -1 });
@@ -145,14 +145,16 @@ exports.updatePayroll = async (req, res) => {
     const { _id, ...rest } = req.body;
 
     const payroll = await Payroll.findById(_id).populate("physioId");
-    if (!payroll) return res.status(404).json({ message: "Payroll not found" });
+    if (!payroll) {
+      return res.status(404).json({ message: "Payroll not found" });
+    }
 
-    // 1) SYNC INCOMING DATA
-    // Using your existing normalization logic
     const normalized = normalizePayload(rest, { patch: true });
     Object.assign(payroll, normalized);
 
-    // 2) DATE RANGE & PER DAY RATE
+    console.log("\n========== PAYROLL DEBUG START ==========");
+
+    // ---------------- MONTH SETUP ----------------
     const months = [
       "January",
       "February",
@@ -167,15 +169,89 @@ exports.updatePayroll = async (req, res) => {
       "November",
       "December",
     ];
+
     const mIndex = months.indexOf(payroll.payrRollMonth);
     const year = Number(payroll.payrRollYear);
 
-    // Standardized to UTC to prevent "Date Shifting" which causes wrong leave counts
-    const startRange = new Date(Date.UTC(year, mIndex - 1, 21, 0, 0, 0));
+    const startRange = new Date(Date.UTC(year, mIndex - 1, 21));
     const endRange = new Date(Date.UTC(year, mIndex, 20, 23, 59, 59));
-    const daysInMonth = new Date(year, mIndex + 1, 0).getDate();
 
-    // 3) SESSIONS & LEAVES (Your Original Aggregation Logic)
+    console.log("MONTH:", payroll.payrRollMonth);
+    console.log("YEAR:", year);
+
+    // ---------------- ROLE ----------------
+    const roleName = payroll.physioId?.physioSpcl; // or roleId.RoleName if available
+    const joinDate = new Date(payroll.physioId?.createdAt);
+
+    console.log("ROLE:", roleName);
+    console.log("JOIN DATE:", joinDate);
+
+    // =========================================================
+    // 🟢 HOD LOGIC (NO SESSION DEPENDENCY)
+    // =========================================================
+    // ---------------- HOD LOGIC (FINAL FIXED) ----------------
+    if (roleName === "HEAD OF THE DEPARTMENT") {
+      console.log(">>> HOD FLOW ACTIVE");
+
+      const basicSalary = Number(payroll.physioId.physioSalary || 0);
+
+      // IMPORTANT: round per day rate
+      const perDay = basicSalary / 30;
+
+      const grossSalary = basicSalary;
+
+      const leaves = await LeaveModel.find({
+        physioId: payroll.physioId._id,
+        LeaveDate: { $gte: startRange, $lte: endRange },
+        isActive: true,
+      });
+
+      let paid = 0;
+      let unpaid = 0;
+
+      leaves.forEach((l) => {
+        const w = l.LeaveMode === "Half Day" ? 0.5 : 1;
+        if (l.PaidLeave) paid += w;
+        else unpaid += w;
+      });
+
+      // IMPORTANT: round deduction properly
+      const unpaidDeduction = unpaid * perDay;
+
+      const manualDeduction = Number(payroll.ManualDeduction || 0);
+      const esi = Number(payroll.ESI || 0);
+      const pf = Number(payroll.PF || 0);
+
+      const totalDeduction = unpaidDeduction + manualDeduction + esi + pf;
+
+      const netSalary = grossSalary - totalDeduction;
+
+      console.log("HOD GROSS:", grossSalary);
+      console.log("PER DAY:", perDay);
+      console.log("UNPAID DEDUCTION:", unpaidDeduction);
+      console.log("TOTAL DEDUCTION:", totalDeduction);
+      console.log("NET SALARY:", netSalary);
+
+      payroll.TotalSalary = Math.round(grossSalary);
+      payroll.TotalAmountDeducted = Math.round(totalDeduction);
+      payroll.NetSalary = Math.round(netSalary);
+
+      payroll.PaidLeaves = paid;
+      payroll.NoofLeave = unpaid;
+      payroll.TotalLeaves = paid + unpaid;
+
+      await payroll.save();
+
+      return res.status(200).json({
+        message: "HOD Payroll updated successfully",
+        data: payroll,
+      });
+    }
+
+    // =========================================================
+    // 🟡 PHYSIO LOGIC (UNCHANGED - YOUR ORIGINAL SYSTEM)
+    // =========================================================
+
     const sessionDaysAgg = await Session.aggregate([
       {
         $match: {
@@ -188,30 +264,15 @@ exports.updatePayroll = async (req, res) => {
       },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$sessionDate" } },
+          _id: {
+            $dateToString: { format: "%Y-%m-%d", date: "$sessionDate" },
+          },
         },
       },
       { $count: "uniqueDays" },
     ]);
-    const completedSessionDays = sessionDaysAgg[0]?.uniqueDays || 0;
 
-    const totalsessionsDays = await Session.aggregate([
-      {
-        $match: {
-          sessionDate: { $gte: startRange, $lte: endRange },
-          sessionStatusId: new mongoose.Types.ObjectId(
-            "691ec69eae0e10763c8f21e0",
-          ),
-        },
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$sessionDate" } },
-        },
-      },
-      { $count: "uniqueDays" },
-    ]);
-    const TotalcompletedSessionDays = totalsessionsDays[0]?.uniqueDays || 0;
+    const completedSessionDays = sessionDaysAgg[0]?.uniqueDays || 0;
 
     const allLeaves = await LeaveModel.find({
       physioId: payroll.physioId._id,
@@ -219,79 +280,57 @@ exports.updatePayroll = async (req, res) => {
       isActive: true,
     });
 
-    let paidLeavesCount = 0;
-    let unpaidLeavesCount = 0;
+    let paidLeaves = 0;
+    let unpaidLeaves = 0;
 
-    allLeaves.forEach((leave) => {
-      // Ensure "Half Day" matches your DB string exactly (case-sensitive)
-      const weight = leave.LeaveMode === "Half Day" ? 0.5 : 1;
-      if (leave.PaidLeave) {
-        paidLeavesCount += weight;
-      } else {
-        unpaidLeavesCount += weight;
-      }
+    allLeaves.forEach((l) => {
+      const w = l.LeaveMode === "Half Day" ? 0.5 : 1;
+      if (l.PaidLeave) paidLeaves += w;
+      else unpaidLeaves += w;
     });
 
-    // 4) BASIC SALARY CALCULATION
-    const totalworkingDays =
-      TotalcompletedSessionDays + paidLeavesCount + unpaidLeavesCount;
-    const totalAttended = completedSessionDays + paidLeavesCount;
+    const basicSalary = Number(payroll.physioId.physioSalary || 0);
+    const perDayRate = basicSalary / 30;
 
-    const basicSalary = Number(
-      payroll.basicSalary || payroll.physioId.physioSalary || 0,
-    );
-    const perDayRate = basicSalary / daysInMonth;
-    const earnedBasicSalary = Math.round(perDayRate * totalAttended);
+    const attendedDays = completedSessionDays + paidLeaves;
+    const earnedBasicSalary = Math.round(perDayRate * attendedDays);
 
-    // 5) ADDITIONS (Petrol, Savings, Maintenance, Incentive)
-    const petrolKm = Number(payroll.PetrolKm || 0);
-    const ratePerKm = Number(payroll.amountperKm || 0);
-    const calculatedPetrolAmt = Math.round(petrolKm * ratePerKm);
-    payroll.PetrolAmount = calculatedPetrolAmt;
+    const petrol =
+      Number(payroll.PetrolKm || 0) * Number(payroll.amountperKm || 0);
 
-    // SAVINGS FAILSAFE: Check both casing possibilities from the request
-    const incomingSavings =
-      req.body.Savings !== undefined ? req.body.Savings : req.body.savings;
-    const savingsAmt = Number(incomingSavings ?? payroll.savings ?? 0);
+    const savings = Number(payroll.savings || 0);
+    const vehicle = Number(payroll.vehicleMaintanance || 0);
+    const incentive = Number(payroll.Incentive || 0);
 
-    const vehicleMaint = Number(payroll.vehicleMaintanance || 0);
-    const incentiveAmt = Number(payroll.Incentive || 0);
-    const manualDeduction = Number(payroll.ManualDeduction || 0);
+    const gross = earnedBasicSalary + petrol + savings + vehicle + incentive;
 
-    // Calculation: (Basic + MTC + Petrol + Incentive + Savings)
-    const totalSalary =
-      earnedBasicSalary +
-      vehicleMaint +
-      calculatedPetrolAmt +
-      incentiveAmt +
-      savingsAmt;
+    const unpaidDeduction = unpaidLeaves * perDayRate;
 
-    // Net Salary: (Total - Manual Deductions - Statutory)
-    const netSalary =
-      totalSalary -
-      manualDeduction -
-      Number(payroll.ESI || 0) -
+    const deductions =
+      unpaidDeduction +
+      Number(payroll.ManualDeduction || 0) +
+      Number(payroll.ESI || 0) +
       Number(payroll.PF || 0);
 
-    // 6) STORE FINAL VALUES (Syncing all possible schema field names)
-    payroll.Savings = savingsAmt;
-    payroll.savings = savingsAmt;
-    payroll.TotalSalary = Math.round(totalSalary);
-    payroll.NetSalary = Math.round(netSalary);
-    payroll.totalWorkingDays = totalworkingDays;
-    payroll.attendedDays = totalAttended;
-    payroll.NoofLeave = unpaidLeavesCount;
-    payroll.PaidLeaves = paidLeavesCount; // Explicitly update this for the UI
-    payroll.TotalLeaves = allLeaves.length;
+    const net = gross - deductions;
+
+    payroll.attendedDays = attendedDays;
+    payroll.PaidLeaves = paidLeaves;
+    payroll.NoofLeave = unpaidLeaves;
+    payroll.TotalLeaves = paidLeaves + unpaidLeaves;
+
+    payroll.TotalSalary = Math.round(gross);
+    payroll.TotalAmountDeducted = Math.round(deductions);
+    payroll.NetSalary = Math.round(net);
 
     await payroll.save();
 
     return res.status(200).json({
-      message: `Payroll updated. Total Salary: ₹${payroll.TotalSalary} (Includes ₹${savingsAmt} savings)`,
+      message: "Physio Payroll updated successfully",
       data: payroll,
     });
   } catch (error) {
-    console.error("Update Error:", error);
+    console.error(error);
     return res.status(500).json({ message: error.message });
   }
 };

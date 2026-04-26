@@ -333,6 +333,15 @@ const patientSchema = new mongoose.Schema(
       ref: "TreatmentCycle",
       default: null,
     },
+    isFromLead: {
+      type: Boolean,
+      default: false,
+    },
+    leadId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Lead",
+      default: null,
+    },
   },
   { timestamps: true },
 );

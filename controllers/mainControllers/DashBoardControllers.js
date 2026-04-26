@@ -9,86 +9,90 @@ const PatientModel = require("../../model/masterModels/Patient");
 const SessionStatus = require("../../model/masterModels/SessionStatus");
 const Bill = require("../../model/masterModels/Bill");
 const ReviewStatus = require("../../model/masterModels/ReviewStatus");
+const Expense = require("../../model/masterModels/Expense");
+const ConsultationModel = require("../../model/masterModels/Consultation");
+const Lead = require("../../model/masterModels/Leads");
 exports.getIncomeByDate = async (req, res) => {
   try {
     let { fromDate, toDate } = req.body;
 
-    // if only fromDate, treat it as one day
     if (fromDate && !toDate) toDate = fromDate;
 
-    // Date range: default = current month
+    const now = new Date();
+
+    // ✅ DATE RANGE (IST SAFE)
     const startDate = fromDate
-      ? new Date(`${fromDate}T00:00:00.000Z`)
-      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      ? new Date(`${fromDate}T00:00:00`)
+      : new Date(now.getFullYear(), now.getMonth(), 1);
 
     const endDate = fromDate
-      ? new Date(`${toDate}T23:59:59.999Z`)
-      : new Date(
-          new Date().getFullYear(),
-          new Date().getMonth() + 1,
-          0,
-          23,
-          59,
-          59,
-          999,
-        );
-    // Load patients + fee type
+      ? new Date(`${toDate}T23:59:59`)
+      : new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    // ✅ Get Completed Status ID
+    const completedStatus = await SessionStatus.findOne({
+      sessionStatusName: "Completed", // case-insensitive
+    }).select("_id");
+
+    if (!completedStatus) {
+      return res.status(400).json({
+        message: "Completed status not found in DB",
+      });
+    }
+
+    // ✅ Load patients
     const patients = await Patients.find().populate(
       "FeesTypeId",
       "feesTypeName",
     );
 
-    // Build result per patient
+    // ✅ Process each patient
     const result = await Promise.all(
       patients.map(async (p) => {
-        // Count only COMPLETED sessions in date range
-        const sessions = await Session.find({
+        // ✅ IMPORTANT FIX: use correct field → sessionDate
+        const completedCount = await Session.countDocuments({
           patientId: p._id,
-          sessionDate: { $gte: startDate, $lte: endDate },
-        }).populate("sessionStatusId", "sessionStatusName");
-
-        const completedCount = sessions.filter(
-          (s) =>
-            s.sessionStatusId?.sessionStatusName?.toLowerCase() === "completed",
-        ).length;
-
+          sessionStatusId: completedStatus._id,
+          sessionDate: { $gte: startDate, $lt: endDate }, // ✅ FIXED
+        });
         const feeTypeName = p.FeesTypeId?.feesTypeName || "N/A";
         const baseFee = Number(p.feeAmount || 0);
 
-        // Fee per session logic
+        // ✅ Fee calculation
         let feePerSession = 0;
-        if (feeTypeName === "PerSession") feePerSession = baseFee;
-        else if (feeTypeName === "PerMonth") feePerSession = baseFee / 26;
+        if (feeTypeName === "PerSession") {
+          feePerSession = baseFee;
+        } else if (feeTypeName === "PerMonth") {
+          feePerSession = baseFee / 26;
+        }
 
-        const totalIncome = Math.round(Number(completedCount * feePerSession));
+        const totalIncome = Math.round(completedCount * feePerSession);
 
         return {
           _id: p._id,
           patientName: p.patientName,
           feeType: feeTypeName,
-          feePerSession: Math.round(Number(feePerSession)),
-          totalCompletedSessions: Math.round(completedCount),
+          feePerSession: Math.round(feePerSession),
+          totalCompletedSessions: completedCount,
           totalIncome,
         };
       }),
     );
 
-    // totals (IMPORTANT: reduce from result)
-    const totalCompletedAmount = Number(
-      result.reduce(
-        (sum, p) => Math.round(sum + Number(p.totalIncome || 0)),
-        0,
-      ),
+    // ✅ Totals
+    const totalCompletedAmount = result.reduce(
+      (sum, p) => sum + p.totalIncome,
+      0,
     );
 
     const totalCompletedSessions = result.reduce(
-      (sum, p) => Math.round(sum + Number(p.totalCompletedSessions || 0)),
+      (sum, p) => sum + p.totalCompletedSessions,
       0,
     );
 
     const avgPricePerSession =
       totalCompletedSessions > 0
-        ? Math.round(Number(totalCompletedAmount / totalCompletedSessions))
+        ? Math.round(totalCompletedAmount / totalCompletedSessions)
         : 0;
 
     return res.status(200).json({
@@ -98,6 +102,7 @@ exports.getIncomeByDate = async (req, res) => {
       patients: result,
     });
   } catch (error) {
+    console.error(error);
     return res.status(500).json({ message: error.message });
   }
 };
@@ -320,5 +325,363 @@ exports.getAllBillforDashboard = async (req, res) => {
       success: false,
       message: "Failed to fetch bills",
     });
+  }
+};
+
+exports.getReportsSummary = async (req, res) => {
+  try {
+    const month = Number(req.body.month);
+    const year = Number(req.body.year);
+    const physioId = req.body.physioId;
+    const referenceId = req.body.referenceId;
+
+    if (!month || !year) {
+      return res.status(400).json({ message: "Month and Year are required" });
+    }
+
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 1);
+
+    const completedSessionStatus = await SessionStatus.findOne({
+      sessionStatusName: "Completed",
+    });
+
+    const cancelledSessionStatus = await SessionStatus.findOne({
+      sessionStatusName: "Canceled",
+    });
+
+    const completedReviewStatus = await ReviewStatus.findOne({
+      reviewStatusName: "Completed",
+    });
+
+    const pendingReviewStatus = await ReviewStatus.findOne({
+      reviewStatusName: "Pending",
+    });
+
+    if (!completedSessionStatus) {
+      return res
+        .status(400)
+        .json({ message: "Completed session status not found" });
+    }
+
+    const refId =
+      referenceId && referenceId !== "all"
+        ? new mongoose.Types.ObjectId(referenceId)
+        : null;
+
+    const physId =
+      physioId && physioId !== "all"
+        ? new mongoose.Types.ObjectId(physioId)
+        : null;
+
+    // =========================
+    // BASE SESSION FILTER
+    // =========================
+    let sessionFilter = {
+      sessionDate: { $gte: startDate, $lt: endDate },
+      ...(physId && { physioId: physId }),
+    };
+
+    // =========================
+    // ADD REFERENCE FILTER (IMPORTANT FIX)
+    // =========================
+    if (refId) {
+      const refPatients = await Patients.find(
+        { ReferenceId: refId },
+        { _id: 1 },
+      );
+
+      const refPatientIds = refPatients.map((p) => p._id);
+
+      sessionFilter.patientId = { $in: refPatientIds };
+    }
+
+    // =========================
+    // SESSION DATA
+    // =========================
+    const sessions = await Session.find(sessionFilter);
+
+    const patientIds = await Session.distinct("patientId", sessionFilter);
+    const physioIds = await Session.distinct("physioId", sessionFilter);
+
+    // =========================
+    // PATIENT STATS
+    // =========================
+    const totalPhysio = await Physio.countDocuments({
+      _id: { $in: physioIds },
+      isActive: true,
+    });
+
+    const totalActivePatients = await Patients.countDocuments({
+      _id: { $in: patientIds },
+      isRecovered: false,
+    });
+
+    const totalRecoveredPatients = await Patients.countDocuments({
+      _id: { $in: patientIds },
+      isRecovered: true,
+    });
+
+    const patientRecoveredCount = await Patients.countDocuments({
+      _id: { $in: patientIds },
+      isRecovered: true,
+      recoveredType: "Patient Recovered",
+    });
+
+    const otherReasonRecoveredCount = await Patients.countDocuments({
+      _id: { $in: patientIds },
+      isRecovered: true,
+      recoveredType: "Other",
+    });
+
+    // =========================
+    // SESSION STATS
+    // =========================
+    const totalSessions = sessions.length;
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const todaySession = await Session.countDocuments({
+      sessionDate: { $gte: todayStart, $lte: todayEnd },
+      ...(physId && { physioId: physId }),
+    });
+
+    const completedSessions = sessions.filter(
+      (s) => String(s.sessionStatusId) === String(completedSessionStatus._id),
+    ).length;
+
+    const cancelledSessions = sessions.filter(
+      (s) => String(s.sessionStatusId) === String(cancelledSessionStatus?._id),
+    ).length;
+
+    const conversionRate =
+      totalSessions > 0
+        ? ((completedSessions / totalSessions) * 100).toFixed(2)
+        : 0;
+
+    // =========================
+    // CONSULTATIONS (FIXED LOGIC)
+    // =========================
+    const consultationsFromLeads = await ConsultationModel.countDocuments({
+      consultationDate: { $gte: startDate, $lt: endDate },
+      ...(refId && { ReferenceId: refId }),
+    });
+
+    const newEnquiries = await Patients.countDocuments({
+      createdAt: { $gte: startDate, $lt: endDate },
+      ...(refId && { ReferenceId: refId }),
+    });
+
+    const convertedPatients = await Patients.countDocuments({
+      createdAt: { $gte: startDate, $lt: endDate },
+      isFromLead: true,
+      ...(refId && { ReferenceId: refId }),
+    });
+
+    const totalLeads = await Lead.countDocuments({
+      createdAt: { $gte: startDate, $lt: endDate },
+      ...(refId && { ReferenceId: refId }),
+    });
+
+    const leadConversionRatess =
+      totalLeads > 0 ? ((convertedPatients / totalLeads) * 100).toFixed(2) : 0;
+
+    // =========================
+    // REFERENCE WISE (FIXED ALIGNMENT)
+    // =========================
+    const referenceWise = await Session.aggregate([
+      {
+        $match: sessionFilter,
+      },
+      {
+        $lookup: {
+          from: "patients",
+          localField: "patientId",
+          foreignField: "_id",
+          as: "patient",
+        },
+      },
+      { $unwind: "$patient" },
+      {
+        $lookup: {
+          from: "references",
+          localField: "patient.ReferenceId",
+          foreignField: "_id",
+          as: "reference",
+        },
+      },
+      { $unwind: { path: "$reference", preserveNullAndEmptyArrays: true } },
+
+      {
+        $group: {
+          _id: "$patient.ReferenceId",
+          sourceName: { $first: "$reference.sourceName" },
+          totalSessions: { $sum: 1 },
+          completedSessions: {
+            $sum: {
+              $cond: [
+                { $eq: ["$sessionStatusId", completedSessionStatus._id] },
+                1,
+                0,
+              ],
+            },
+          },
+          cancelledSessions: {
+            $sum: {
+              $cond: [
+                { $eq: ["$sessionStatusId", cancelledSessionStatus?._id] },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    // =========================
+    // REVENUE (REFERENCE FIXED)
+    // =========================
+    const revenueData = await Session.aggregate([
+      {
+        $match: {
+          ...sessionFilter,
+          sessionStatusId: completedSessionStatus._id,
+        },
+      },
+      {
+        $lookup: {
+          from: "patients",
+          localField: "patientId",
+          foreignField: "_id",
+          as: "patient",
+        },
+      },
+      { $unwind: "$patient" },
+
+      {
+        $lookup: {
+          from: "feestypes",
+          localField: "patient.FeesTypeId",
+          foreignField: "_id",
+          as: "feeType",
+        },
+      },
+      { $unwind: { path: "$feeType", preserveNullAndEmptyArrays: true } },
+
+      {
+        $group: {
+          _id: null,
+          totalRevenue: {
+            $sum: {
+              $cond: [
+                { $eq: ["$feeType.feesTypeName", "PerMonth"] },
+                { $divide: ["$patient.feeAmount", 26] },
+                "$patient.feeAmount",
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    const monthlyRevenue = revenueData[0]?.totalRevenue || 0;
+
+    // =========================
+    // EXPENSE (UNCHANGED)
+    // =========================
+    const monthlyExpenseData = await Expense.aggregate([
+      {
+        $match: {
+          expenseDate: { $gte: startDate, $lt: endDate },
+          isActive: true,
+        },
+      },
+      {
+        $lookup: {
+          from: "expensetypes",
+          localField: "ExpenseTypeID",
+          foreignField: "_id",
+          as: "type",
+        },
+      },
+      { $unwind: "$type" },
+      {
+        $match: {
+          "type.ExpenseTypeName": "Expenses",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalExpense: { $sum: "$expenseAmount" },
+        },
+      },
+    ]);
+
+    const totalExpense = monthlyExpenseData[0]?.totalExpense || 0;
+
+    // =========================
+    // REVIEWS
+    // =========================
+    const completedReviews = await Review.countDocuments({
+      reviewStatusId: completedReviewStatus?._id,
+      createdAt: { $gte: startDate, $lt: endDate },
+    });
+
+    const pendingReviews = await Review.countDocuments({
+      reviewStatusId: pendingReviewStatus?._id,
+      createdAt: { $gte: startDate, $lt: endDate },
+    });
+
+    const newPatients = await Patients.countDocuments({
+      sessionStartDate: { $gte: startDate, $lt: endDate },
+    });
+
+    const leadConversionRate =
+      newEnquiries > 0 ? ((newPatients / newEnquiries) * 100).toFixed(2) : 0;
+
+    // =========================
+    // FINAL RESPONSE
+    // =========================
+    return res.json({
+      stats: {
+        totalSessions,
+        completedSessions,
+        cancelledSessions,
+        conversionRate: Number(conversionRate),
+
+        totalActivePatients,
+        totalRecoveredPatients,
+        patientRecoveredCount,
+        otherReasonRecoveredCount,
+
+        referenceWise,
+        physioWise: [],
+        totalPhysio,
+
+        todaySession,
+
+        monthlyRevenue,
+        totalExpense,
+
+        completedReviews,
+        pendingReviews,
+
+        newEnquiries,
+        newPatients,
+
+        consultationsFromLeads,
+        leadConversionRatess,
+        leadConversionRate: Number(leadConversionRate),
+      },
+    });
+  } catch (err) {
+    console.error("getReportsSummary error:", err);
+    res.status(500).json({ error: err.message });
   }
 };

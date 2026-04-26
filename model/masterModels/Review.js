@@ -45,6 +45,10 @@ const ReviewSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Session",
     },
+    referenceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Reference",
+    },
   },
   { timestamps: true },
 );

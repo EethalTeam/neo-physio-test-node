@@ -615,20 +615,20 @@ exports.AssignPhysio = async (req, res) => {
     // Duplicate visitOrder check
     // same physio + active patient + not recovered
     // -----------------------------
-    const duplicateVisitOrder = await Patient.findOne({
-      physioId: new mongoose.Types.ObjectId(physioId),
-      visitOrder: numericVisitOrder,
-      isRecovered: false,
-    }).session(dbSession);
+    // const duplicateVisitOrder = await Patient.findOne({
+    //   physioId: new mongoose.Types.ObjectId(physioId),
+    //   visitOrder: numericVisitOrder,
+    //   isRecovered: false,
+    // }).session(dbSession);
 
-    if (duplicateVisitOrder) {
-      await dbSession.abortTransaction();
-      dbSession.endSession();
-      return res.status(400).json({
-        success: false,
-        message: `Visit order ${numericVisitOrder} already assigned to another patient for this physio`,
-      });
-    }
+    // if (duplicateVisitOrder) {
+    //   await dbSession.abortTransaction();
+    //   dbSession.endSession();
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: `Visit order ${numericVisitOrder} already assigned to another patient for this physio`,
+    //   });
+    // }
 
     // -----------------------------
     // Duplicate patient check
@@ -788,7 +788,60 @@ exports.AssignPhysio = async (req, res) => {
         safeMedicalHistoryAndRiskFactor = [];
       }
     }
+    // -----------------------------
+    // 🔁 FETCH EXISTING PATIENTS FOR PHYSIO
+    // -----------------------------
+    const existingPatients = await Patient.find({
+      physioId: new mongoose.Types.ObjectId(physioId),
+      isRecovered: false,
+    })
+      .sort({ visitOrder: 1 })
+      .session(dbSession);
 
+    // -----------------------------
+    // 🧠 CREATE TEMP PATIENT OBJECT (NOT SAVED YET)
+    // -----------------------------
+    const tempPatient = {
+      _id: new mongoose.Types.ObjectId(), // temporary id
+      ...updatedConsultation.toObject(),
+      physioId,
+      visitOrder: numericVisitOrder,
+    };
+
+    // -----------------------------
+    // 🧩 INSERT INTO CORRECT POSITION
+    // -----------------------------
+    existingPatients.splice(numericVisitOrder - 1, 0, tempPatient);
+
+    // -----------------------------
+    // 🔄 REMOVE DUPLICATES (SAFETY)
+    // -----------------------------
+    const uniquePatients = [];
+    const seen = new Set();
+
+    for (const p of existingPatients) {
+      const id = p._id.toString();
+      if (!seen.has(id)) {
+        uniquePatients.push(p);
+        seen.add(id);
+      }
+    }
+
+    // -----------------------------
+    // 🔁 REASSIGN VISIT ORDER
+    // -----------------------------
+    for (let i = 0; i < uniquePatients.length; i++) {
+      const patient = uniquePatients[i];
+
+      // skip temp one (we'll assign later)
+      if (patient._id.toString() === tempPatient._id.toString()) continue;
+
+      await Patient.findByIdAndUpdate(
+        patient._id,
+        { visitOrder: i + 1 },
+        { session: dbSession },
+      );
+    }
     // -----------------------------
     // Generate patient code
     // -----------------------------
@@ -877,6 +930,8 @@ exports.AssignPhysio = async (req, res) => {
       activeCycleId: generatedCycleId,
       isRecovered: false,
       recoveredAt: null,
+      isFromLead: consultation.leadId ? true : false,
+      leadId: consultation.leadId || null,
     });
 
     await newPatient.save({ session: dbSession });

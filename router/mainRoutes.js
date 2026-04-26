@@ -18,6 +18,7 @@ const LeaveControllers = require("../controllers/mainControllers/LeaveController
 const PayrollControllers = require("../controllers/mainControllers/PayrollControllers");
 const LinkControllers = require("../controllers/mainControllers/LinkControllers");
 const CronJobControllers = require("../controllers/mainControllers/CronJobControllers");
+const ReportsController = require("../controllers/mainControllers/ReportsController");
 
 const SECRET = "ENIS_NEO_SECRET_KEY_2026";
 
@@ -343,7 +344,51 @@ router.post(
   "/Dashboard/getAllBillforDashboard",
   DashBoardControllers.getAllBillforDashboard,
 );
+router.post(
+  "/Dashboard/getReportsSummary",
+  DashBoardControllers.getReportsSummary,
+);
+//Reports
 
+router.post(
+  "/Report/downloadPhysioWiseReportPDF",
+  ReportsController.downloadPhysioWiseReportPDF,
+);
+router.post("/Report/downloadReportCSV", ReportsController.downloadReportCSV);
+router.post("/Report/downloadReportPDF", ReportsController.downloadReportPDF);
+router.post(
+  "/Report/downloadHodReportPDF",
+  ReportsController.downloadHodReportPDF,
+);
+router.post(
+  "/Report/downloadPhysioWiseReportXLSX",
+  ReportsController.downloadPhysioWiseReportXLSX,
+);
+router.post(
+  "/Report/downloadPatientListPDF",
+  ReportsController.downloadPatientListPDF,
+);
+router.post(
+  "/Report/downloadPatientListXLSX",
+  ReportsController.downloadPatientListXLSX,
+);
+router.post(
+  "/Report/exportHodPerformanceReport",
+  ReportsController.exportHodPerformanceReport,
+);
+router.post(
+  "/Report/exportHodReviewReport",
+  ReportsController.exportHodReviewReport,
+);
+
+router.post(
+  "/Report/downloadHodReportCSV",
+  ReportsController.downloadHodReportCSV,
+);
+router.post(
+  "/Report/exportPhysioPerformanceReport",
+  ReportsController.exportPhysioPerformanceReport,
+);
 //ConsultationControllers
 router.post(
   "/Consultation/createConsultation",
