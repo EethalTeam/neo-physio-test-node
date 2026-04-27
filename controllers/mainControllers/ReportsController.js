@@ -824,28 +824,30 @@ exports.downloadHodReportPDF = async (req, res) => {
 
     const reportMonth = monthNames[month - 1];
 
-    // ---------------- HEADER ----------------
-    doc.addImage(logoBase64, "PNG", 10, 5, 28, 28);
+    // ---------------- HEADER (FIXED ALIGNMENT) ----------------
+    doc.addImage(logoBase64, "PNG", 10, 6, 25, 25);
+
+    const textX = 45; // aligned with logo center
 
     doc.setFontSize(18);
     doc.setFont("helvetica", "bold");
-    doc.text("NEO PHYSIO", 14, 15);
+    doc.text("NEO PHYSIO", textX, 16);
 
     doc.setFontSize(14);
-    doc.text("HOD REPORT", 14, 23);
+    doc.text("HOD REPORT", textX, 24);
 
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text(`Month: ${reportMonth} ${year}`, 14, 30);
-    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 36);
+    doc.text(`Month: ${reportMonth} ${year}`, textX, 31);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, textX, 37);
 
-    // ---------------- LINE ----------------
+    // ---------------- LINE (FIXED ALIGNMENT) ----------------
     doc.setLineWidth(0.5);
-    doc.line(14, 40, 195, 40);
+    doc.line(10, 42, 200, 42);
 
     // ---------------- TABLE ----------------
     autoTable(doc, {
-      startY: 48,
+      startY: 50,
       head: [["Metric", "Value"]],
       body: [
         ["Total Sessions", sessions.length],
