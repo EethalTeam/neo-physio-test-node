@@ -11,6 +11,12 @@ const ConsultationModel = require("../../model/masterModels/Consultation");
 const ExcelJS = require("exceljs");
 const PatientModel = require("../../model/masterModels/Patient");
 const { ChartJSNodeCanvas } = require("chartjs-node-canvas");
+const fs = require("fs");
+const path = require("path");
+
+// LOAD LOGO
+const logoPath = path.join(__dirname, "../../assets/images/logo_png.png");
+const logoBase64 = fs.readFileSync(logoPath, "base64");
 exports.downloadPhysioWiseReportXLSX = async (req, res) => {
   try {
     const { month, year, physioId, referenceId } = req.body;
@@ -327,7 +333,7 @@ exports.downloadPhysioWiseReportPDF = async (req, res) => {
 
     const reportMonth = monthNames[month - 1];
     const generatedDate = new Date().toLocaleString("en-GB");
-
+    doc.addImage(logoBase64, "PNG", 10, 5, 28, 28);
     doc.setFontSize(16);
     doc.text("NEO PHYSIO", 40, 15);
 
@@ -589,16 +595,26 @@ exports.downloadReportPDF = async (req, res) => {
 
     const reportMonth = monthNames[month - 1];
 
-    // ---------------- HEADER ----------------
+    // ================= LOGO =================
+    doc.addImage(logoBase64, "PNG", 10, 8, 22, 22);
+
+    // ================= TITLE SECTION =================
     doc.setFontSize(16);
-    doc.text("NEO PHYSIO REPORT", 14, 15);
+    doc.setFont("helvetica", "bold");
+    doc.text("NEO PHYSIO REPORT", 105, 15, { align: "center" });
 
     doc.setFontSize(11);
-    doc.text(`Month: ${reportMonth} ${year}`, 14, 25);
-    doc.text(`Generated: ${new Date().toLocaleString("en-GB")}`, 14, 32);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Month: ${reportMonth} ${year}`, 105, 22, { align: "center" });
 
-    doc.line(14, 35, 195, 35);
+    doc.setFontSize(10);
+    doc.text(`Generated: ${new Date().toLocaleString("en-GB")}`, 105, 28, {
+      align: "center",
+    });
 
+    // ================= LINE =================
+    doc.setLineWidth(0.5);
+    doc.line(10, 35, 200, 35);
     // ---------------- TABLE ----------------
     autoTable(doc, {
       startY: 40,
@@ -764,7 +780,7 @@ exports.downloadHodReportPDF = async (req, res) => {
       const status = (s.sessionStatusId?.sessionStatusName || "").toLowerCase();
 
       if (status.includes("completed")) completedSessions++;
-      else if (status.includes("canceled")) cancelledSessions++;
+      else if (status.includes("cancel")) cancelledSessions++;
 
       if (s.patientId) patients.add(String(s.patientId));
     });
@@ -775,19 +791,14 @@ exports.downloadHodReportPDF = async (req, res) => {
 
     const pendingReviews = reviews.length - completedReviews;
 
-    const totalConsultations = consultations.length;
-
-    // ✅ Completed = properly started treatment (not just assigned)
     const completedConsultations = consultations.filter(
       (c) => c.physioId && c.sessionStartDate,
     ).length;
 
-    // ⏳ Pending = not yet assigned or not started
     const pendingConsultations = consultations.filter(
       (c) => !c.physioId || !c.sessionStartDate,
     ).length;
 
-    // 🔁 Converted leads = leadId exists (true conversion source)
     const convertedLeads = consultations.filter(
       (c) => c.leadId && c.leadId !== null && c.leadId !== "",
     ).length;
@@ -811,20 +822,28 @@ exports.downloadHodReportPDF = async (req, res) => {
     ];
 
     const reportMonth = monthNames[month - 1];
+    doc.addImage(logoBase64, "PNG", 10, 5, 28, 28);
 
-    // HEADER
-    doc.setFontSize(16);
-    doc.text("HOD CLINIC REPORT", 14, 15);
+    // ================= HEADER =================
+    doc.setFontSize(18);
+    doc.setFont("helvetica", "bold");
+    doc.text("NEO PHYSIO", 14, 15);
 
-    doc.setFontSize(11);
-    doc.text(`Month: ${reportMonth} ${year}`, 14, 25);
-    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 32);
+    doc.setFontSize(14);
+    doc.text("HOD REPORT", 14, 23);
 
-    doc.line(14, 35, 195, 35);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Month: ${reportMonth} ${year}`, 14, 30);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 36);
 
-    // TABLE
+    // LINE SEPARATOR
+    doc.setLineWidth(0.5);
+    doc.line(14, 40, 195, 40);
+
+    // ================= TABLE =================
     autoTable(doc, {
-      startY: 40,
+      startY: 48,
       head: [["Metric", "Value"]],
       body: [
         ["Total Sessions", sessions.length],
@@ -844,6 +863,20 @@ exports.downloadHodReportPDF = async (req, res) => {
         ["Converted Leads", convertedLeads],
       ],
       theme: "grid",
+      headStyles: {
+        fillColor: [0, 102, 204],
+        textColor: 255,
+        fontStyle: "bold",
+        halign: "center",
+      },
+      styles: {
+        fontSize: 10,
+        cellPadding: 3,
+      },
+      columnStyles: {
+        0: { halign: "left" },
+        1: { halign: "center" },
+      },
     });
 
     const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
@@ -1064,6 +1097,7 @@ exports.downloadPatientListPDF = async (req, res) => {
 
     const reportMonth = monthNames[month - 1];
     const generatedDate = new Date().toLocaleString("en-GB");
+    doc.addImage(logoBase64, "PNG", 10, 5, 28, 28);
 
     // -------- HEADER --------
     doc.setFontSize(18);
@@ -1297,6 +1331,7 @@ exports.exportHodPerformanceReport = async (req, res) => {
       const doc = new jsPDF();
 
       const generatedDate = new Date().toLocaleString("en-GB");
+      doc.addImage(logoBase64, "PNG", 10, 5, 28, 28);
 
       // -------- HEADER --------
       doc.setFontSize(18);
@@ -1524,6 +1559,7 @@ exports.exportPhysioPerformanceReport = async (req, res) => {
     // ================= PDF =================
     if (type === "pdf") {
       const doc = new jsPDF("landscape");
+      doc.addImage(logoBase64, "PNG", 10, 5, 28, 28);
 
       doc.setFontSize(18);
       doc.text("NEO PHYSIO", 148, 15, { align: "center" });
@@ -1717,6 +1753,7 @@ exports.exportHodReviewReport = async (req, res) => {
 
       const reportMonth = monthNames[month - 1];
       const generatedDate = new Date().toLocaleString("en-GB");
+      doc.addImage(logoBase64, "PNG", 10, 5, 28, 28);
 
       // ===== HEADER =====
       doc.setFontSize(18);
