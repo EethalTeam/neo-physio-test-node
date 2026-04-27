@@ -748,13 +748,16 @@ exports.downloadHodReportPDF = async (req, res) => {
   try {
     const { physioId, referenceId, month, year, role } = req.body;
 
+    // ---------------- ACCESS CHECK ----------------
     if (role !== "HOD") {
       return res.status(403).json({ message: "Access denied" });
     }
 
+    // ---------------- DATE RANGE ----------------
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0);
 
+    // ---------------- DATA FETCH ----------------
     const sessions = await Session.find({
       sessionDate: { $gte: startDate, $lte: endDate },
     }).populate("patientId sessionStatusId");
@@ -771,7 +774,7 @@ exports.downloadHodReportPDF = async (req, res) => {
       createdAt: { $gte: startDate, $lte: endDate },
     });
 
-    // ---------------- STATS ----------------
+    // ---------------- STATS CALCULATION ----------------
     let completedSessions = 0;
     let cancelledSessions = 0;
     let patients = new Set();
@@ -799,11 +802,9 @@ exports.downloadHodReportPDF = async (req, res) => {
       (c) => !c.physioId || !c.sessionStartDate,
     ).length;
 
-    const convertedLeads = consultations.filter(
-      (c) => c.leadId && c.leadId !== null && c.leadId !== "",
-    ).length;
+    const convertedLeads = consultations.filter((c) => c.leadId).length;
 
-    // ---------------- PDF ----------------
+    // ---------------- PDF SETUP ----------------
     const doc = new jsPDF();
 
     const monthNames = [
@@ -822,9 +823,10 @@ exports.downloadHodReportPDF = async (req, res) => {
     ];
 
     const reportMonth = monthNames[month - 1];
+
+    // ---------------- HEADER ----------------
     doc.addImage(logoBase64, "PNG", 10, 5, 28, 28);
 
-    // ================= HEADER =================
     doc.setFontSize(18);
     doc.setFont("helvetica", "bold");
     doc.text("NEO PHYSIO", 14, 15);
@@ -837,11 +839,11 @@ exports.downloadHodReportPDF = async (req, res) => {
     doc.text(`Month: ${reportMonth} ${year}`, 14, 30);
     doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 36);
 
-    // LINE SEPARATOR
+    // ---------------- LINE ----------------
     doc.setLineWidth(0.5);
     doc.line(14, 40, 195, 40);
 
-    // ================= TABLE =================
+    // ---------------- TABLE ----------------
     autoTable(doc, {
       startY: 48,
       head: [["Metric", "Value"]],
@@ -879,6 +881,7 @@ exports.downloadHodReportPDF = async (req, res) => {
       },
     });
 
+    // ---------------- RESPONSE ----------------
     const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
 
     res.setHeader("Content-Type", "application/pdf");
