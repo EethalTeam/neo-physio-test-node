@@ -105,6 +105,10 @@ const physioSChema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    JoiningDate: {
+      type: Date,
+      required: true,
+    },
     physioVehicleMTC: {
       type: Number,
       required: true,

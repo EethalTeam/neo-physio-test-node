@@ -3,54 +3,25 @@ const Payroll = require("../../model/masterModels/Payroll");
 const Session = require("../../model/masterModels/Session");
 const LeaveModel = require("../../model/masterModels/Leave");
 // Small helper: allow both old + new field names
-function normalizePayload(body, { patch = false } = {}) {
-  // helper: only include key if present in request (patch mode)
-  const pick = (key, value) => {
-    if (patch && value === undefined) return {};
-    return { [key]: value };
-  };
+function normalizePayload(payload, { patch = false } = {}) {
+  const cleaned = {};
 
-  // helper: number conversion only if present (patch mode)
-  const num = (key, value) => {
-    if (patch && value === undefined) return {};
-    const n = Number(value);
-    return { [key]: Number.isFinite(n) ? n : 0 }; // for create, fallback to 0
-  };
+  for (const key in payload) {
+    let value = payload[key];
 
-  return {
-    ...pick("physioId", body.physioId),
+    // ❌ DON'T remove valid values like 0
+    if (value === null || value === undefined) continue;
 
-    ...pick("payrRollMonth", body.payrRollMonth ?? body.month),
-    ...pick("payrRollYear", body.payrRollYear ?? body.year),
-    ...pick("payRollDate", body.payRollDate ?? body.Date ?? body.date),
+    // convert numeric strings → number
+    if (typeof value === "string" && value.trim() !== "") {
+      const num = Number(value);
+      if (!isNaN(num)) value = num;
+    }
 
-    ...num(
-      "payrRollCompletedSessions",
-      body.payrRollCompletedSessions ?? body.completedSession,
-    ),
-    ...num(
-      "payrRollCancelledSession",
-      body.payrRollCancelledSession ?? body.cancelledSession,
-    ),
-    ...num("ManualDeduction", body.ManualDeduction ?? body.manualDeduction),
+    cleaned[key] = value;
+  }
 
-    ...num("PetrolKm", body.PetrolKm),
-    ...num("PetrolAmount", body.PetrolAmount),
-    ...num("amountperKm", body.amountperKm),
-
-    ...num("basicSalary", body.basicSalary),
-    ...num("vehicleMaintanance", body.vehicleMaintanance),
-    ...num("Incentive", body.Incentive),
-
-    ...num("NoofLeave", body.NoofLeave),
-    ...num("TotalAmountDeducted", body.TotalAmountDeducted),
-
-    ...num("ESI", body.ESI),
-    ...num("PF", body.PF),
-
-    ...num("TotalSalary", body.TotalSalary),
-    ...num("NetSalary", body.NetSalary),
-  };
+  return cleaned;
 }
 
 // ✅ CREATE (manual)
@@ -149,10 +120,9 @@ exports.updatePayroll = async (req, res) => {
       return res.status(404).json({ message: "Payroll not found" });
     }
 
+    // ---------------- NORMALIZE ----------------
     const normalized = normalizePayload(rest, { patch: true });
     Object.assign(payroll, normalized);
-
-    console.log("\n========== PAYROLL DEBUG START ==========");
 
     // ---------------- MONTH SETUP ----------------
     const months = [
@@ -176,145 +146,88 @@ exports.updatePayroll = async (req, res) => {
     const startRange = new Date(Date.UTC(year, mIndex - 1, 21));
     const endRange = new Date(Date.UTC(year, mIndex, 20, 23, 59, 59));
 
-    console.log("MONTH:", payroll.payrRollMonth);
-    console.log("YEAR:", year);
+    // ---------------- JOIN DATE ----------------
+    const joinDate = new Date(payroll.physioId?.JoiningDate);
 
-    // ---------------- ROLE ----------------
-    const roleName = payroll.physioId?.physioSpcl; // or roleId.RoleName if available
-    const joinDate = new Date(payroll.physioId?.createdAt);
+    const cleanJoinDate = new Date(
+      Date.UTC(
+        joinDate.getUTCFullYear(),
+        joinDate.getUTCMonth(),
+        joinDate.getUTCDate(),
+      ),
+    );
 
-    console.log("ROLE:", roleName);
-    console.log("JOIN DATE:", joinDate);
+    const effectiveStart =
+      cleanJoinDate > startRange ? cleanJoinDate : startRange;
 
-    // =========================================================
-    // 🟢 HOD LOGIC (NO SESSION DEPENDENCY)
-    // =========================================================
-    // ---------------- HOD LOGIC (FINAL FIXED) ----------------
-    if (roleName === "HEAD OF THE DEPARTMENT") {
-      console.log(">>> HOD FLOW ACTIVE");
+    const effectiveEnd = endRange;
 
-      const basicSalary = Number(payroll.physioId.physioSalary || 0);
+    // ---------------- TOTAL DAYS ----------------
+    const totalDays =
+      Math.floor((effectiveEnd - effectiveStart) / (1000 * 60 * 60 * 24)) + 1;
 
-      // IMPORTANT: round per day rate
-      const perDay = basicSalary / 30;
-
-      const grossSalary = basicSalary;
-
-      const leaves = await LeaveModel.find({
-        physioId: payroll.physioId._id,
-        LeaveDate: { $gte: startRange, $lte: endRange },
-        isActive: true,
-      });
-
-      let paid = 0;
-      let unpaid = 0;
-
-      leaves.forEach((l) => {
-        const w = l.LeaveMode === "Half Day" ? 0.5 : 1;
-        if (l.PaidLeave) paid += w;
-        else unpaid += w;
-      });
-
-      // IMPORTANT: round deduction properly
-      const unpaidDeduction = unpaid * perDay;
-
-      const manualDeduction = Number(payroll.ManualDeduction || 0);
-      const esi = Number(payroll.ESI || 0);
-      const pf = Number(payroll.PF || 0);
-
-      const totalDeduction = unpaidDeduction + manualDeduction + esi + pf;
-
-      const netSalary = grossSalary - totalDeduction;
-
-      console.log("HOD GROSS:", grossSalary);
-      console.log("PER DAY:", perDay);
-      console.log("UNPAID DEDUCTION:", unpaidDeduction);
-      console.log("TOTAL DEDUCTION:", totalDeduction);
-      console.log("NET SALARY:", netSalary);
-
-      payroll.TotalSalary = Math.round(grossSalary);
-      payroll.TotalAmountDeducted = Math.round(totalDeduction);
-      payroll.NetSalary = Math.round(netSalary);
-
-      payroll.PaidLeaves = paid;
-      payroll.NoofLeave = unpaid;
-      payroll.TotalLeaves = paid + unpaid;
-
-      await payroll.save();
-
-      return res.status(200).json({
-        message: "HOD Payroll updated successfully",
-        data: payroll,
+    if (totalDays <= 0) {
+      return res.status(400).json({
+        message: "Invalid payroll period",
       });
     }
 
-    // =========================================================
-    // 🟡 PHYSIO LOGIC (UNCHANGED - YOUR ORIGINAL SYSTEM)
-    // =========================================================
+    // ---------------- COMMON VALUES ----------------
+    const basicSalary = Number(payroll.physioId.physioSalary || 0);
+    const perDayRate = basicSalary / 30;
 
-    const sessionDaysAgg = await Session.aggregate([
-      {
-        $match: {
-          physioId: payroll.physioId._id,
-          sessionDate: { $gte: startRange, $lte: endRange },
-          sessionStatusId: new mongoose.Types.ObjectId(
-            "691ec69eae0e10763c8f21e0",
-          ),
-        },
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: "%Y-%m-%d", date: "$sessionDate" },
-          },
-        },
-      },
-      { $count: "uniqueDays" },
-    ]);
+    const petrol =
+      Number(payroll.PetrolKm || 0) * Number(payroll.amountperKm || 0);
 
-    const completedSessionDays = sessionDaysAgg[0]?.uniqueDays || 0;
+    payroll.PetrolAmount = Math.round(petrol);
 
-    const allLeaves = await LeaveModel.find({
+    const savings = Number(payroll.savings ?? 0);
+    const vehicle = Number(payroll.vehicleMaintanance ?? 0);
+    const incentive = Number(payroll.Incentive ?? 0);
+
+    // ---------------- LEAVES ----------------
+    const leaves = await LeaveModel.find({
       physioId: payroll.physioId._id,
-      LeaveDate: { $gte: startRange, $lte: endRange },
+      LeaveDate: { $gte: effectiveStart, $lte: endRange },
       isActive: true,
     });
 
     let paidLeaves = 0;
     let unpaidLeaves = 0;
 
-    allLeaves.forEach((l) => {
+    leaves.forEach((l) => {
       const w = l.LeaveMode === "Half Day" ? 0.5 : 1;
       if (l.PaidLeave) paidLeaves += w;
       else unpaidLeaves += w;
     });
 
-    const basicSalary = Number(payroll.physioId.physioSalary || 0);
-    const perDayRate = basicSalary / 30;
+    // ---------------- SALARY ----------------
 
-    const attendedDays = completedSessionDays + paidLeaves;
-    const earnedBasicSalary = Math.round(perDayRate * attendedDays);
+    // Full salary for period
+    const earnedBasicSalary = Math.round(perDayRate * totalDays);
 
-    const petrol =
-      Number(payroll.PetrolKm || 0) * Number(payroll.amountperKm || 0);
+    // Leave deduction
+    const leaveDeduction = unpaidLeaves * perDayRate;
+    const userManual = Number(normalized.ManualDeduction ?? 0);
 
-    const savings = Number(payroll.savings || 0);
-    const vehicle = Number(payroll.vehicleMaintanance || 0);
-    const incentive = Number(payroll.Incentive || 0);
+    const finalManualDeduction = userManual + leaveDeduction;
+    // 🔥 IMPORTANT: get user manual deduction separately
+    console.log(userManual, "userManual", "leaveDeduction", leaveDeduction);
+    // 👉 FINAL manual deduction includes leave
 
+    console.log(finalManualDeduction, finalManualDeduction);
     const gross = earnedBasicSalary + petrol + savings + vehicle + incentive;
 
-    const unpaidDeduction = unpaidLeaves * perDayRate;
-
     const deductions =
-      unpaidDeduction +
-      Number(payroll.ManualDeduction || 0) +
-      Number(payroll.ESI || 0) +
-      Number(payroll.PF || 0);
+      finalManualDeduction + Number(payroll.ESI || 0) + Number(payroll.PF || 0);
 
     const net = gross - deductions;
 
-    payroll.attendedDays = attendedDays;
+    // ---------------- SAVE ----------------
+    payroll.attendedDays = totalDays - unpaidLeaves;
+
+    payroll.ManualDeduction = Math.round(finalManualDeduction);
+
     payroll.PaidLeaves = paidLeaves;
     payroll.NoofLeave = unpaidLeaves;
     payroll.TotalLeaves = paidLeaves + unpaidLeaves;
@@ -322,11 +235,12 @@ exports.updatePayroll = async (req, res) => {
     payroll.TotalSalary = Math.round(gross);
     payroll.TotalAmountDeducted = Math.round(deductions);
     payroll.NetSalary = Math.round(net);
+    payroll.totalWorkingDays = totalDays;
 
     await payroll.save();
 
     return res.status(200).json({
-      message: "Physio Payroll updated successfully",
+      message: "Payroll updated successfully",
       data: payroll,
     });
   } catch (error) {

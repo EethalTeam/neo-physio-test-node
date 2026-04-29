@@ -1623,12 +1623,23 @@ exports.processMonthlyPayroll = async () => {
     const physios = await Physio.find({ isActive: true });
 
     for (const p of physios) {
+      const joinDate = new Date(p.JoiningDate);
+
+      const cleanJoinDate = new Date(
+        Date.UTC(
+          joinDate.getUTCFullYear(),
+          joinDate.getUTCMonth(),
+          joinDate.getUTCDate(),
+        ),
+      );
+      const effectiveStart =
+        cleanJoinDate > startRange ? cleanJoinDate : startRange;
       // 1. Calculate Approved/Paid/Pending Petrol Kms
       const petrolAgg = await PetrolAllowance.aggregate([
         {
           $match: {
             physioId: p._id,
-            date: { $gte: startRange, $lte: endRange },
+            date: { $gte: effectiveStart, $lte: endRange },
             status: { $in: ["Approved", "Paid", "Pending"] }, // include Pending
           },
         },
@@ -1641,7 +1652,7 @@ exports.processMonthlyPayroll = async () => {
         {
           $match: {
             physioId: p._id,
-            sessionDate: { $gte: startRange, $lte: endRange },
+            sessionDate: { $gte: effectiveStart, $lte: endRange },
             sessionStatusId: new mongoose.Types.ObjectId(
               "691ec69eae0e10763c8f21e0",
             ),
@@ -1658,7 +1669,7 @@ exports.processMonthlyPayroll = async () => {
         {
           $match: {
             physioId: p._id,
-            sessionDate: { $gte: startRange, $lte: endRange },
+            sessionDate: { $gte: effectiveStart, $lte: endRange },
             sessionStatusId: new mongoose.Types.ObjectId(
               "691ec69eae0e10763c8f21e0",
             ),
@@ -1680,7 +1691,7 @@ exports.processMonthlyPayroll = async () => {
       const totalWorkingdayAgg = await Session.aggregate([
         {
           $match: {
-            sessionDate: { $gte: startRange, $lte: endRange },
+            sessionDate: { $gte: effectiveStart, $lte: endRange },
             sessionStatusId: new mongoose.Types.ObjectId(
               "691ec69eae0e10763c8f21e0",
             ),
@@ -1703,7 +1714,7 @@ exports.processMonthlyPayroll = async () => {
       // Add Paid Leave days
       const paidLeaveCount = await LeaveModel.countDocuments({
         physioId: p._id,
-        LeaveDate: { $gte: startRange, $lte: endRange },
+        LeaveDate: { $gte: effectiveStart, $lte: endRange },
         PaidLeave: true,
         isActive: true,
       });
@@ -1711,7 +1722,7 @@ exports.processMonthlyPayroll = async () => {
       // 3. Calculate Unpaid Leaves
       const leavesCount = await LeaveModel.countDocuments({
         physioId: p._id,
-        LeaveDate: { $gte: startRange, $lte: endRange },
+        LeaveDate: { $gte: effectiveStart, $lte: endRange },
         PaidLeave: false,
         isActive: true,
       });
@@ -1765,7 +1776,7 @@ exports.processMonthlyPayroll = async () => {
           payrRollCompletedSessions: completedSessions,
           totalWorkingDays: totalworkingDays,
           attendedDays: workingDays,
-          calculationCycle: `${startRange.toDateString()} to ${endRange.toDateString()}`,
+          calculationCycle: `${effectiveStart.toDateString()} to ${endRange.toDateString()}`,
         },
         { upsert: true, new: true },
       );
@@ -1778,7 +1789,7 @@ exports.processMonthlyPayroll = async () => {
       await PetrolAllowance.updateMany(
         {
           physioId: p._id,
-          date: { $gte: startRange, $lte: endRange },
+          date: { $gte: effectiveStart, $lte: endRange },
           status: "Pending",
         },
         { $set: { status: "Paid" } },

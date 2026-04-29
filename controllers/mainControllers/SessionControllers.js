@@ -103,7 +103,8 @@ exports.createSession = async (req, res) => {
 
       const monthlySessionCount = await Session.countDocuments({
         patientId,
-        sessionDate: { $gte: monthStart, $lte: endOfDay }, // include today
+        cycleId, // ✅ IMPORTANT (you already have it)
+        sessionDate: { $gte: monthStart, $lt: monthEnd },
       });
       console.log(monthlySessionCount, "monthlySessionCount");
       const counter = await Counter.findOneAndUpdate(
@@ -1323,11 +1324,13 @@ exports.SessionEnd = async (req, res) => {
     // ===== MONTHLY SESSION COUNT UPDATE =====
     if (Status.sessionStatusName === "Completed") {
       const sessionDateObj = new Date(session.sessionDate);
+
       const monthStart = new Date(
         sessionDateObj.getFullYear(),
         sessionDateObj.getMonth(),
         1,
       );
+
       const monthEnd = new Date(
         sessionDateObj.getFullYear(),
         sessionDateObj.getMonth() + 1,
@@ -1345,10 +1348,12 @@ exports.SessionEnd = async (req, res) => {
         sessionStatusId: completedStatus._id,
       }).session(mongooseSession);
 
-      session.monthlySessionCount = monthlyCompletedCount;
-      await session.save({ session: mongooseSession });
+      await Session.updateOne(
+        { _id: session._id },
+        { $set: { monthlySessionCount: monthlyCompletedCount } },
+        { session: mongooseSession },
+      );
     }
-
     // 4) Fetch Patient and FeesType
     const patient = await Patient.findById(session.patientId)
       .populate("FeesTypeId")
@@ -1972,6 +1977,60 @@ exports.revertCompletedSession = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error",
+    });
+  }
+};
+exports.getSessionsByMonthYear = async (req, res) => {
+  try {
+    const { month, year, physioId, storedRole } = req.body;
+
+    if (!month || !year) {
+      return res.status(400).json({
+        message: "Month and Year are required",
+      });
+    }
+
+    // ✅ Convert month (1-12) → JS month index (0-11)
+    const monthIndex = Number(month) - 1;
+    const fullYear = Number(year);
+
+    // ✅ Start of month
+    const startDate = new Date(Date.UTC(fullYear, monthIndex, 1, 0, 0, 0));
+
+    // ✅ End of month
+    const endDate = new Date(Date.UTC(fullYear, monthIndex + 1, 0, 23, 59, 59));
+
+    console.log("START DATE:", startDate);
+    console.log("END DATE:", endDate);
+
+    // ---------------- QUERY ----------------
+    const query = {
+      sessionDate: {
+        $gte: startDate,
+        $lte: endDate,
+      },
+    };
+
+    // ✅ Role-based filtering
+    if (storedRole === "Physio" && physioId) {
+      query.physioId = physioId;
+    }
+
+    // ---------------- FETCH ----------------
+    const sessions = await Session.find(query)
+      .populate("physioId")
+      .populate("patientId")
+      .populate("sessionStatusId")
+      .lean();
+    console.log(sessions, "sessions");
+    return res.status(200).json({
+      message: "Sessions fetched successfully",
+      data: sessions,
+    });
+  } catch (error) {
+    console.error("Error fetching sessions:", error);
+    return res.status(500).json({
+      message: error.message,
     });
   }
 };

@@ -468,3 +468,55 @@ exports.getFinancialYearSummary = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+exports.getAvgRevenuePerPatientByMonth = async (req, res) => {
+  try {
+    const { year } = req.body;
+
+    const selectedYear = Number(year);
+
+    const startDate = new Date(`${selectedYear}-01-01`);
+    const endDate = new Date(`${selectedYear}-12-31`);
+
+    const data = await Expense.aggregate([
+      {
+        $match: {
+          expenseDate: { $gte: startDate, $lte: endDate },
+        },
+      },
+
+      {
+        $group: {
+          _id: { month: { $month: "$expenseDate" } },
+          totalRevenue: {
+            $sum: {
+              $cond: [{ $eq: ["$type", "Income"] }, "$expenseAmount", 0],
+            },
+          },
+          patients: { $addToSet: "$PatientId" },
+        },
+      },
+
+      {
+        $project: {
+          month: "$_id.month",
+          totalRevenue: 1,
+          patientCount: { $size: "$patients" },
+          avgRevenue: {
+            $cond: [
+              { $eq: [{ $size: "$patients" }, 0] },
+              0,
+              { $divide: ["$totalRevenue", { $size: "$patients" }] },
+            ],
+          },
+        },
+      },
+
+      { $sort: { month: 1 } },
+    ]);
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false });
+  }
+};
