@@ -422,38 +422,56 @@ exports.processScheduledReviewGeneration = async () => {
       ReviewType.findOne({ reviewTypeName: "General" }),
       ReviewStatus.findOne({ reviewStatusName: "Pending" }),
     ]);
+
     const istOffset = 5.5 * 60 * 60 * 1000;
+
     const todayStr = new Date(Date.now() + istOffset)
       .toISOString()
       .split("T")[0];
+
     const tomorrowStr = new Date(Date.now() + istOffset + 24 * 60 * 60 * 1000)
       .toISOString()
       .split("T")[0];
 
+    // Fetch only active patients
     const activePatients = await Patient.find({ isRecovered: false });
+
     for (const patient of activePatients) {
+      // 🛑 Safety check
+      if (patient.isRecovered) continue;
+
       if (!patient.reviewFrequency || !patient.sessionStartDate) continue;
-      const lastReview = await Review.findOne({ patientId: patient._id }).sort({
-        reviewDate: -1,
-      });
+
+      const lastReview = await Review.findOne({
+        patientId: patient._id,
+      }).sort({ reviewDate: -1 });
+
       let baseDateStr = new Date(
         lastReview ? lastReview.reviewDate : patient.sessionStartDate,
       )
         .toISOString()
         .split("T")[0];
+
       let calcDate = new Date(baseDateStr + "T00:00:00.000Z");
+
       calcDate.setUTCDate(calcDate.getUTCDate() + patient.reviewFrequency);
-      if (calcDate.getUTCDay() === 0)
+
+      // Skip Sunday
+      if (calcDate.getUTCDay() === 0) {
         calcDate.setUTCDate(calcDate.getUTCDate() + 1);
+      }
 
       const nextDueStr = calcDate.toISOString().split("T")[0];
+
       if (nextDueStr === todayStr || nextDueStr === tomorrowStr) {
         const finalISODate = nextDueStr + "T00:00:00.000Z";
+
         const exists = await Review.findOne({
           patientId: patient._id,
           reviewDate: new Date(finalISODate),
         });
-        if (!exists)
+
+        if (!exists) {
           await Review.create({
             patientId: patient._id,
             physioId: patient.physioId,
@@ -461,13 +479,13 @@ exports.processScheduledReviewGeneration = async () => {
             reviewStatusId: statusPending._id,
             reviewTypeId: typeDefault._id,
           });
+        }
       }
     }
   } catch (err) {
     console.error("Review Error:", err);
   }
 };
-
 exports.processReturnJourneyAllowance = async () => {
   try {
     const completedStatus = await SessionStatus.findOne({
@@ -1618,13 +1636,14 @@ exports.processMonthlyPayroll = async () => {
 
     const physios = await Physio.find({ isActive: true });
 
-    // ---------------- WORKING DAYS (CALENDAR BASED) ----------------
+    // ---------------- WORKING DAYS ----------------
     const getWorkingDays = (start, end) => {
       let count = 0;
       const current = new Date(start);
       current.setDate(current.getDate() + 1);
+
       while (current <= end) {
-        count++; // includes ALL days (Sunday included)
+        count++;
         current.setDate(current.getDate() + 1);
       }
 
@@ -1645,6 +1664,19 @@ exports.processMonthlyPayroll = async () => {
       // ---------------- EFFECTIVE START ----------------
       const effectiveStart =
         cleanJoinDate > startRange ? cleanJoinDate : startRange;
+
+      // ---------------- COMPLETED SESSIONS ----------------
+      const completedId = new mongoose.Types.ObjectId(
+        "691ec69eae0e10763c8f21e0",
+      );
+
+      const completedSessions = await Session.countDocuments({
+        physioId: p._id,
+        sessionDate: { $gte: effectiveStart, $lte: endRange },
+        sessionStatusId: completedId,
+      });
+
+      console.log("Completed Sessions:", completedSessions, p.physioName);
 
       // ---------------- PETROL ----------------
       const petrolAgg = await PetrolAllowance.aggregate([
@@ -1680,34 +1712,47 @@ exports.processMonthlyPayroll = async () => {
         isActive: true,
       });
 
+      const totalLeaves = paidLeaveCount + unpaidLeaveCount;
+
       // ---------------- WORKING DAYS ----------------
-      let workingDays = getWorkingDays(effectiveStart, endRange);
+      let totalWorkingDays;
 
-      // paid leaves ADD to working days (they are paid days)
-      workingDays += paidLeaveCount - unpaidLeaveCount;
+      if (cleanJoinDate >= startRange && cleanJoinDate <= endRange) {
+        totalWorkingDays = getWorkingDays(cleanJoinDate, endRange);
+      } else {
+        totalWorkingDays = 30;
+      }
 
-      const totalWorkingDays = getWorkingDays(startRange, endRange);
+      let attendedDays = totalWorkingDays + paidLeaveCount - unpaidLeaveCount;
 
       // ---------------- SALARY COMPONENTS ----------------
       const baseSalary = Number(p.physioSalary || 0);
       const vehicleMaintenance = Number(p.physioVehicleMTC || 0);
-      const incentivePerSession = Number(p.physioIncentive || 0);
-      const petrolRatePerKm = Number(p.physioPetrolAlw || 0);
       const Incentive = Number(p.physioIncentive || 0);
+      const petrolRatePerKm = Number(p.physioPetrolAlw || 0);
+
+      const savings = Number(p.savings || 0);
+      const esi = Number(p.ESI || 0);
+      const pf = Number(p.PF || 0);
+
       const salaryPerDay = baseSalary / 30;
 
-      // deduction only for UNPAID leaves
-      const deductionAmount = Math.round(salaryPerDay * unpaidLeaveCount);
+      const leaveDeduction = Math.round(salaryPerDay * unpaidLeaveCount);
 
       const salaryFromWorkingDays = Math.round(salaryPerDay * totalWorkingDays);
+
+      const petrolAmount = totalKms * petrolRatePerKm;
 
       const grossSalary =
         salaryFromWorkingDays +
         vehicleMaintenance +
-        totalKms * petrolRatePerKm +
-        Incentive;
+        petrolAmount +
+        Incentive +
+        savings;
 
-      const netSalary = grossSalary - deductionAmount;
+      const deductions = leaveDeduction + esi + pf;
+
+      const netSalary = grossSalary - deductions;
 
       // ---------------- SAVE PAYROLL ----------------
       await Payroll.findOneAndUpdate(
@@ -1721,20 +1766,29 @@ exports.processMonthlyPayroll = async () => {
 
           basicSalary: baseSalary,
           vehicleMaintanance: vehicleMaintenance,
-          amountperKm: petrolRatePerKm,
-          Incentive: incentivePerSession,
 
+          amountperKm: petrolRatePerKm,
           PetrolKm: totalKms,
-          PetrolAmount: totalKms * petrolRatePerKm,
+          PetrolAmount: petrolAmount,
+
+          Incentive: Incentive,
+          payrRollCompletedSessions: completedSessions,
+
+          savings: savings,
+          ESI: esi,
+          PF: pf,
 
           TotalSalary: Math.round(grossSalary),
           NetSalary: Math.round(netSalary),
 
           NoofLeave: unpaidLeaveCount,
-          TotalAmountDeducted: deductionAmount,
+          PaidLeaves: paidLeaveCount,
+          TotalLeaves: totalLeaves,
 
-          totalWorkingDays,
-          attendedDays: workingDays,
+          TotalAmountDeducted: deductions,
+
+          totalWorkingDays: totalWorkingDays,
+          attendedDays: attendedDays,
 
           calculationCycle: `${effectiveStart.toDateString()} to ${endRange.toDateString()}`,
         },
@@ -1742,7 +1796,9 @@ exports.processMonthlyPayroll = async () => {
       );
 
       console.log(
-        `[Payroll] Processed: ${p.physioName || p._id} | Net: ${Math.round(netSalary)}`,
+        `[Payroll] Processed: ${
+          p.physioName || p._id
+        } | Net Salary: ${Math.round(netSalary)}`,
       );
 
       // ---------------- PETROL STATUS UPDATE ----------------

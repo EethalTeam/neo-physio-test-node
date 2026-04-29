@@ -163,8 +163,16 @@ exports.updatePayroll = async (req, res) => {
     const effectiveEnd = endRange;
 
     // ---------------- TOTAL DAYS ----------------
-    const totalDays =
-      Math.floor((effectiveEnd - effectiveStart) / (1000 * 60 * 60 * 24)) + 1;
+    let totalDays;
+
+    // if joining date is inside payroll cycle
+    if (cleanJoinDate >= startRange && cleanJoinDate <= endRange) {
+      totalDays =
+        Math.floor((effectiveEnd - cleanJoinDate) / (1000 * 60 * 60 * 24)) + 1;
+    } else {
+      // full cycle employee
+      totalDays = 30;
+    }
 
     if (totalDays <= 0) {
       return res.status(400).json({
@@ -222,7 +230,14 @@ exports.updatePayroll = async (req, res) => {
       finalManualDeduction + Number(payroll.ESI || 0) + Number(payroll.PF || 0);
 
     const net = gross - deductions;
+    console.log(
+      totalDays,
 
+      "-",
+      unpaidLeaves,
+      "=",
+      payroll.attendedDays,
+    );
     // ---------------- SAVE ----------------
     payroll.attendedDays = totalDays - unpaidLeaves;
 
