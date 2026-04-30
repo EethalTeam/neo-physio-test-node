@@ -614,71 +614,102 @@ exports.deleteAllBillsAndResetSessions = async (req, res) => {
   }
 };
 
-exports.revertBillingStatusGlobal = async (req, res) => {
+exports.revertYesterdayBilling = async (req, res) => {
   try {
-    const { monthName, year } = req.body;
-    // Example req.body: { "monthName": "March", "year": 2026 }
+    const today = new Date();
 
-    if (!monthName || !year) {
-      return res
-        .status(400)
-        .json({ message: "Please provide monthName (e.g. 'March') and year." });
-    }
-
-    const targetFeesTypeId = new mongoose.Types.ObjectId(
-      "691af5dc43be7d5e28619825",
+    const startOfYesterday = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate() - 2,
+      0,
+      0,
+      0,
+      0,
     );
 
-    // 1. Calculate Date Range for the provided Month/Year
-    const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth(); // Converts "March" to 2
-    const startDate = new Date(year, monthIndex, 1, 0, 0, 0, 0);
-    const endDate = new Date(year, monthIndex + 1, 0, 23, 59, 59, 999);
-
-    console.log(`[Revert] Targeting FeesType: ${targetFeesTypeId}`);
-    console.log(
-      `[Revert] Range: ${startDate.toDateString()} to ${endDate.toDateString()}`,
+    const endOfYesterday = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate() - 2,
+      23,
+      59,
+      59,
+      999,
     );
 
-    // 2. Get all Patient IDs for this specific FeesType
-    const patients = await Patient.find({
-      FeesTypeId: targetFeesTypeId,
-    }).select("_id");
-    const patientIds = patients.map((p) => p._id);
+    // 1. GET BILLS
+    const bills = await Bill.find({
+      createdAt: { $gte: startOfYesterday, $lte: endOfYesterday },
+    });
 
-    if (patientIds.length === 0) {
+    if (bills.length === 0) {
       return res.status(404).json({
-        message: `No patients found for FeesType 691af5dc43be7d5e28619825`,
+        message: "No bills found for yesterday",
       });
     }
 
-    // 3. Update the Sessions
-    // We look for sessions within the date range that are currently marked as billed
-    const result = await Session.updateMany(
-      {
-        patientId: { $in: patientIds },
-        sessionDate: { $gte: startDate, $lte: endDate },
-        isBilled: true,
-      },
+    const billIds = bills.map((b) => b._id);
+
+    // 🔹 Helper to restore Debit
+    const restoreAdvanceToDebit = async (patientId, amount) => {
+      if (!amount || amount <= 0) return;
+
+      let remaining = Number(amount);
+
+      // Get oldest debit entries (reverse of deduction logic)
+      const debitEntries = await Debit.find({ patientId }).sort({
+        createdAt: -1, // reverse order
+      });
+
+      for (const debit of debitEntries) {
+        if (remaining <= 0) break;
+
+        const current = Number(debit.DebitAmount || 0);
+
+        // restore back
+        debit.DebitAmount = Number((current + remaining).toFixed(2));
+        remaining = 0;
+
+        await debit.save();
+      }
+    };
+
+    // 2. REVERT SESSIONS
+    const sessionResult = await Session.updateMany(
+      { billId: { $in: billIds } },
       {
         $set: {
           isBilled: false,
-          billId: null, // Clear the reference to the incorrect bill
+          billId: null,
         },
       },
     );
 
+    // 3. RESTORE ADVANCE PROPERLY
+    for (const bill of bills) {
+      if (bill.DeductedFromAdvance > 0) {
+        await restoreAdvanceToDebit(bill.patientId, bill.DeductedFromAdvance);
+      }
+    }
+
+    // 4. DELETE BILLS
+    const deleteResult = await Bill.deleteMany({
+      _id: { $in: billIds },
+    });
+
     return res.status(200).json({
       success: true,
-      message: `Successfully reverted sessions for ${monthName} ${year}`,
-      affectedPatients: patientIds.length,
-      sessionsUpdated: result.modifiedCount,
+      message: "Yesterday billing fully reverted (including advance)",
+      billsDeleted: deleteResult.deletedCount,
+      sessionsUpdated: sessionResult.modifiedCount,
     });
   } catch (err) {
-    console.error("Global Revert Error:", err);
+    console.error("Revert Error:", err);
     return res.status(500).json({
       success: false,
-      error: "Ensure month name is spelled correctly (e.g., 'March').",
-      details: err.message,
+      message: "Error reverting billing",
+      error: err.message,
     });
   }
 };

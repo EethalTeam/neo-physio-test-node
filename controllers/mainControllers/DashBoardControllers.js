@@ -185,6 +185,14 @@ exports.getAllDashBoard = async (req, res) => {
         },
       };
     }
+    if (fromDate && toDate) {
+      startDate = new Date(fromDate + "T00:00:00.000Z");
+      endDate = new Date(toDate + "T23:59:59.999Z");
+    } else {
+      const now = new Date();
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    }
     const pendingStatus = await ReviewStatus.findOne({
       reviewStatusName: "Pending",
     });
@@ -211,7 +219,11 @@ exports.getAllDashBoard = async (req, res) => {
     let completedStatus = await SessionStatus.findOne({
       sessionStatusName: "Completed",
     });
-
+    console.log("startDate:", startDate);
+    console.log("endDate:", endDate);
+    const oneSession = await Session.findOne();
+    console.log(oneSession);
+    console.log(completedStatus);
     let completedSessionsCount = await Session.countDocuments({
       sessionStatusId: completedStatus?._id,
       sessionDate: {
@@ -219,15 +231,6 @@ exports.getAllDashBoard = async (req, res) => {
         $lt: endDate,
       },
     });
-
-    if (fromDate && toDate) {
-      startDate = new Date(fromDate + "T00:00:00.000Z");
-      endDate = new Date(toDate + "T23:59:59.999Z");
-    } else {
-      const now = new Date();
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    }
 
     let patientRecover = await PatientModel.find({ isRecovered: true });
     let patientRecovered = await PatientModel.find({

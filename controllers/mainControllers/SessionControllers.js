@@ -1440,7 +1440,9 @@ exports.SessionEnd = async (req, res) => {
         }
 
         const invoiceNo = `HNI-${String(counter.seq).padStart(6, "0")}`;
-
+        const STANDARD_SESSIONS = 26;
+        const ratePerSession =
+          Number(patient.feeAmount || 0) / STANDARD_SESSIONS;
         await Bill.create(
           [
             {
@@ -1453,6 +1455,7 @@ exports.SessionEnd = async (req, res) => {
               DeductedFromAdvance: deductedFromAdvance,
               NetBilledAmount: netBilledAmount,
               startDate: startDate,
+              ratePerSession: Number(ratePerSession.toFixed(2)),
               ToDate: toDate,
               month: today.toLocaleString("default", { month: "long" }),
               year: currentYear,

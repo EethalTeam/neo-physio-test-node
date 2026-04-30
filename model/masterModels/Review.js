@@ -30,6 +30,9 @@ const ReviewSchema = new mongoose.Schema(
       ref: "ReviewType",
       // required: true,
     },
+    createdBy: {
+      type: String,
+    },
     redFlags: [
       {
         redFlagId: {

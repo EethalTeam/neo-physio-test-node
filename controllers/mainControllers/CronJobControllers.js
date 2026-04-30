@@ -478,6 +478,7 @@ exports.processScheduledReviewGeneration = async () => {
             reviewDate: finalISODate,
             reviewStatusId: statusPending._id,
             reviewTypeId: typeDefault._id,
+            createdBy: "System",
           });
         }
       }
@@ -1150,16 +1151,20 @@ exports.processSessionPendingCheck = async (io) => {
 
 exports.processMonthlyBilling = async () => {
   try {
+    // const today = new Date();
     const today = new Date();
+    today.setDate(today.getDate() - 1);
 
+    console.log(today, "today");
     // 1. CALCULATE LAST DAY OF CURRENT MONTH
     const lastDayDateObject = new Date(
       today.getFullYear(),
       today.getMonth() + 1,
       0,
     );
+    console.log(lastDayDateObject, "lastDayDateObject");
     const lastDayOfMonth = lastDayDateObject.getDate();
-
+    console.log(lastDayOfMonth, "lastDayOfMonth");
     // 2. THE SAFETY GATE
     if (today.getDate() !== lastDayOfMonth) {
       console.log(
@@ -1167,11 +1172,11 @@ exports.processMonthlyBilling = async () => {
       );
       return;
     }
-
+    console.log(today.getDate(), "today.getDate()");
     console.log(
       `[Billing] Starting month-end processing for ${today.toDateString()}...`,
     );
-
+    return;
     const startOfMonth = new Date(
       today.getFullYear(),
       today.getMonth(),
@@ -1270,6 +1275,17 @@ exports.processMonthlyBilling = async () => {
 
         const physioId = sessionsToBill[0]?.physioId || patient?.physioId;
         if (!physioId) continue;
+        let ratePerSession = 0;
+
+        if (feeTypeName === "persession") {
+          ratePerSession = Number(patient?.feeAmount || 0);
+        } else if (feeTypeName === "permonth") {
+          const STANDARD_SESSIONS = 26;
+          ratePerSession = Number(patient?.feeAmount || 0) / STANDARD_SESSIONS;
+        } else {
+          console.log("Unknown fee type:", feeTypeName);
+          continue;
+        }
 
         // Total = Rate * however many sessions they actually did
         const totalBill = Number(patient?.feeAmount || 0) * sessionCount;
@@ -1315,7 +1331,7 @@ exports.processMonthlyBilling = async () => {
           NetBilledAmount: Number(netBilledAmount.toFixed(2)),
           startDate: sessionsToBill[0].sessionDate,
           ToDate: sessionsToBill[sessionsToBill.length - 1].sessionDate,
-          ratePerSession: Number((patient?.feeAmount || 0).toFixed(2)),
+          ratePerSession: Number(ratePerSession.toFixed(2)),
           totalAmount: Number(totalBill.toFixed(2)),
           TotalSessionCount: sessionCount,
           month: monthName,
@@ -1822,9 +1838,13 @@ exports.initDailySessionGeneration = () =>
     timezone: "Asia/Kolkata",
   });
 exports.initScheduledReviewGeneration = () =>
-  cron.schedule("0 5 * * 1-6", () => this.processScheduledReviewGeneration(), {
-    timezone: "Asia/Kolkata",
-  });
+  cron.schedule(
+    "18 13 * * 1-6",
+    () => this.processScheduledReviewGeneration(),
+    {
+      timezone: "Asia/Kolkata",
+    },
+  );
 exports.initReturnJourneyAllowanceCron = () =>
   cron.schedule("30 19 * * *", () => this.processReturnJourneyAllowance(), {
     timezone: "Asia/Kolkata",
@@ -1834,7 +1854,7 @@ exports.initSessionCron = (io) =>
     timezone: "Asia/Kolkata",
   });
 exports.initMonthlyBillingGeneration = () =>
-  cron.schedule("0 20 28-31 * *", () => this.processMonthlyBilling(), {
+  cron.schedule("31 11 28-31 * *", () => this.processMonthlyBilling(), {
     // cron.schedule("59 18 26 * *", () => this.processMonthlyBilling(), {
     // cron.schedule("39 11 23 * *", () => this.processMonthlyBilling(), {
     timezone: "Asia/Kolkata",

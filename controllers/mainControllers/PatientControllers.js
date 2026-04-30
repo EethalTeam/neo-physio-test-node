@@ -6,6 +6,7 @@ const SessionModel = require("../../model/masterModels/Session");
 const Bill = require("../../model/masterModels/Bill");
 const Debit = require("../../model/masterModels/DebitPayment");
 const TreatmentCycle = require("../../model/masterModels/TreatmentCycle");
+const Review = require("../../model/masterModels/Review");
 const fs = require("fs");
 const path = require("path");
 const multer = require("multer");
@@ -1658,7 +1659,31 @@ exports.markPatientRecovered = async (req, res) => {
         ],
         { session: dbSession },
       );
+      const today = new Date();
 
+      // End of today (so today’s reviews are safe)
+      const endOfToday = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate(),
+        23,
+        59,
+        59,
+        999,
+      );
+
+      // 🔥 DELETE FUTURE REVIEWS
+      const deletedReviews = await Review.deleteMany(
+        {
+          patientId: patient._id,
+          reviewDate: { $gt: endOfToday },
+        },
+        { session: dbSession },
+      );
+
+      console.log(
+        `[Recovered] Deleted ${deletedReviews.deletedCount} future reviews`,
+      );
       generatedBill = bill[0];
 
       // MARK SESSIONS AS BILLED

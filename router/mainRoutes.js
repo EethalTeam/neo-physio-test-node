@@ -161,7 +161,7 @@ router.post("/Bill/revertPayment", BillCountrollers.revertPayment);
 
 router.post(
   "/Bill/revertBillingStatusGlobal",
-  BillCountrollers.revertBillingStatusGlobal,
+  BillCountrollers.revertYesterdayBilling,
 );
 router.post(
   "/Bill/syncCorrectMarchBillsFixed",
@@ -194,9 +194,14 @@ router.post("/Physio/logoutUser", physioControllers.logoutUser);
 router.post("/Physio/checkLogin", physioControllers.checkLogin);
 router.post("/Review/updateReviewDate", ReviewControllers.updateReviewDate);
 router.post(
+  "/Review/getAllReviewsfully",
+  ReviewControllers.deleteFutureReviews,
+);
+router.post(
   "/Review/getAllReviewDownload",
   ReviewControllers.getAllReviewDownload,
 );
+
 //Leave
 router.post("/LeaveControllers/saveLeavePlan", LeaveControllers.saveLeavePlan);
 router.post(

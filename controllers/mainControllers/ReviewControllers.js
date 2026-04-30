@@ -14,6 +14,7 @@ exports.createReview = async (req, res) => {
       physioId,
       sessionId,
       reviewDate,
+      createdBy,
       // reviewTime,
       reviewTypeId,
       redflagId,
@@ -68,6 +69,7 @@ exports.createReview = async (req, res) => {
     //     data: existingReview,
     //   });
     // }
+
     const review = new Review({
       patientId,
       physioId,
@@ -75,7 +77,8 @@ exports.createReview = async (req, res) => {
       reviewDate,
       // reviewTime,
       reviewTypeId,
-      referenceId,
+      createdBy,
+      // referenceId,
       redFlags,
       feedback,
       Satisfaction,
@@ -719,5 +722,52 @@ exports.getAllReviewDownload = async (req, res) => {
   } catch (error) {
     console.error("Error fetching reviews:", error);
     res.status(500).json({ message: error.message });
+  }
+};
+exports.deleteFutureReviews = async (req, res) => {
+  try {
+    const today = new Date();
+
+    const endOfToday = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+      23,
+      59,
+      59,
+      999,
+    );
+
+    // 1. Get recovered patients
+    const recoveredPatients = await Patient.find({
+      isRecovered: true,
+    }).select("_id");
+    console.log(recoveredPatients.length, "recoveredPatients");
+    const patientIds = recoveredPatients.map((p) => p._id);
+
+    if (patientIds.length === 0) {
+      return res.status(404).json({
+        message: "No recovered patients found",
+      });
+    }
+
+    // 2. Delete only their future reviews
+    const result = await Review.deleteMany({
+      patientId: { $in: patientIds },
+      reviewDate: { $gt: endOfToday },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Future reviews of recovered patients deleted",
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error("Delete Future Reviews Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error deleting future reviews",
+      error: error.message,
+    });
   }
 };
