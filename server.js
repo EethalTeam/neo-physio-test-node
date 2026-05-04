@@ -21,7 +21,7 @@ const Notification = require("./model/masterModels/Notification");
 
 const app = express();
 // const PORT = 8001;
-const PORT = 8002;
+const PORT = 8007;
 
 // app.use(bodyParser.json());
 app.use(
