@@ -140,6 +140,8 @@ router.post(
   LeadControllers.createLead,
 );
 router.post("/Lead/getAllLead", LeadControllers.getAllLeads);
+router.post("/Lead/getThisMonthLeads", LeadControllers.getThisMonthLeads);
+
 router.post("/Lead/getSingleLead", LeadControllers.getLeadById);
 router.post(
   "/Lead/updateLead",

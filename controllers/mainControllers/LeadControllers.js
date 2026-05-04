@@ -618,3 +618,55 @@ exports.deleteLead = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+// controllers/leadController.js
+
+exports.getThisMonthLeads = async (req, res) => {
+  try {
+    const now = new Date();
+
+    // Start of month (1st day 00:00:00)
+    const startOfMonth = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      1,
+      0,
+      0,
+      0,
+      0,
+    );
+
+    // End of month (last day 23:59:59)
+    const endOfMonth = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      0,
+      23,
+      59,
+      59,
+      999,
+    );
+
+    const leads = await Lead.find({
+      createdAt: {
+        $gte: startOfMonth,
+        $lte: endOfMonth,
+      },
+    })
+      .populate("LeadStatusId")
+      .populate("leadSourceId")
+      .populate("ReferenceId")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      count: leads.length,
+      leads,
+    });
+  } catch (error) {
+    console.error("getThisMonthLeads error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch this month leads",
+    });
+  }
+};
