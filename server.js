@@ -20,8 +20,8 @@ const Notification = require("./model/masterModels/Notification");
 // const autoCheckoutOnDisconnect = require('./controllers/masterControllers/AttendanceControllers');
 
 const app = express();
-// const PORT = 8001;
-const PORT = 8007;
+const PORT = 8002;
+// const PORT = 8007;
 
 // app.use(bodyParser.json());
 app.use(
@@ -192,8 +192,8 @@ const createNotification = async ({
 async function main() {
   try {
     await mongoose.connect(
-      // "mongodb+srv://restore_admin:enisdevteam123@enistechteam.owwtldg.mongodb.net/neo-physio?retryWrites=true&w=majority&appName=NEO-PHYSIO",
-      "mongodb+srv://enisbehinderz_db_user:Eethaldevteam123@cluster0.f2yaxih.mongodb.net/neo-physio?retryWrites=true&w=majority&appName=NEO-PHYSIO",
+      "mongodb+srv://restore_admin:enisdevteam123@enistechteam.owwtldg.mongodb.net/neo-physio?retryWrites=true&w=majority&appName=NEO-PHYSIO",
+      // "mongodb+srv://enisbehinderz_db_user:Eethaldevteam123@cluster0.f2yaxih.mongodb.net/neo-physio?retryWrites=true&w=majority&appName=NEO-PHYSIO",
       {
         serverSelectionTimeoutMS: 30000,
         socketTimeoutMS: 45000,

@@ -429,6 +429,7 @@ exports.updateReview = async (req, res) => {
       reviewTypeId,
       redFlags,
       feedback,
+      referenceId,
       reviewStatusId,
       Satisfaction,
     } = req.body;
